@@ -74,6 +74,24 @@ koja dotice model tanak HTTP klijent ka EC2 instanci. To je razlog cele podele.
 | Storage plane | S3 (1 bucket, 3 prefiksa), OpenSearch domen, DynamoDB (2 tabele) |
 | Query plane | API Gateway + JEDNA Lambda (QueryHandler) |
 
+### Odstupanje od dokumentacije: sedmi stack (`search-stack`)
+
+Dokumentacija nabraja sest stack-ova i ne smesta OpenSearch ni u jedan.
+Odluka: **OpenSearch dobija svoj `search-stack`**, ne ide u `storage-stack`.
+
+Razlog nije trosak nego priroda podataka. Indeks je **izveden podatak** — svaki
+chunk, vektor i caption moze se ponovo napraviti pokretanjem ingestiona nad
+`raw/` prefiksom. S3 i DynamoDB drze ono sto se ne moze regenerisati:
+originalne dokumente i `query-log` na kome stoji cela RAGAS evaluacija. Da su u
+istom stack-u, jedna `cdk destroy` komanda brisala bi i jedno i drugo.
+
+Uz to je OpenSearch druga najskuplja stavka posle GPU-a (~0.036 USD/h, non-stop),
+pa se tokom pauza isplati srusiti ga — sto se sme samo ako S3 ostaje netaknut.
+
+Granularnost stack-ova time prati **zivotni ciklus podataka**, ne taksonomiju
+AWS servisa. To je isti argument kojim je vec opravdano izdvajanje GPU sloja i
+vredi ga navesti u poglavlju 3.2 rada.
+
 ### Eksplicitno ODBACENO za implementaciju (ide u "buduci rad", ne u kod)
 
 - **Interni ALB** — za jednu GPU instancu nema koristi. Lambda cita IP instance
@@ -122,6 +140,14 @@ nvm use            # cita .nvmrc
 aws sts get-caller-identity   # proveriti da je vracen nalog onaj privatni
 ```
 
+## Repo
+
+`github.com/lazarstoiljkovic/rag-system-infra` (public).
+
+Zato u repou nema broja AWS naloga: `cdk.context.json` je u `.gitignore` jer mu
+je broj naloga deo kljuca lookup-a. Prava IP adresa se prosledjuje preko
+`-c developerCidr=...`, nikad se ne upisuje u `cdk.json`.
+
 ## Stanje
 
 Bootstrap za `eu-central-1` je uradjen.
@@ -131,7 +157,7 @@ Bootstrap za `eu-central-1` je uradjen.
 | 0 | skelet, `bin/app.ts`, bootstrap | gotovo |
 | 1 | `network-stack`, `storage-stack` | napisano, nije deploy-ovano |
 | 2 | `model-serving-stack` | **blokirano kvotom** |
-| 3 | OpenSearch domen + hibridna sema | nije poceto |
+| 3 | `search-stack` — OpenSearch domen + hibridna sema | nije poceto |
 | 4 | `ingestion-stack` | nije poceto |
 | 5 | `query-stack` | nije poceto |
 | 6 | korpus, RAGAS, UI | nije poceto |
@@ -152,6 +178,14 @@ Dok kvota ne stigne, faze 1, 3 i 4 nisu blokirane: bge-m3 moze na CPU
 (`t3.large` staje u postojecu kvotu od 5 vCPU za standardne instance), pa ceo
 ingestion i retrieval put moze da se testira stvarno — samo captioning i
 generisanje ostaju stub.
+
+## Sledeci korak
+
+1. `cdk deploy RagNetworkStack` + `RagStorageStack` — traje minut, kosta nista,
+   a potvrdjuje da profil stvarno ima permisije za deploy. Bolje da pukne na
+   VPC-u nego kasnije usred Step Functions stack-a.
+2. Faza 3 — `search-stack`. Ne zavisi od GPU-a i blokira fazu 4, dakle
+   najkorisnija stvar dok kvota ceka.
 
 ## Poznati rizici
 
