@@ -1,0 +1,1 @@
+# zavisnosti za query_handler (faza 4/5)

@@ -1,0 +1,1 @@
+# zavisnosti za index_chunks (faza 4/5)

@@ -1,0 +1,23 @@
+*.js
+!jest.config.js
+*.d.ts
+node_modules
+
+# CDK asset staging directory
+.cdk.staging
+cdk.out
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# evaluacija — tajne i generisani izlaz
+evaluation/config.json
+evaluation/results/
+
+# OS
+.DS_Store
+
+# sadrzi broj AWS naloga u kljucevima lookup-a
+cdk.context.json
