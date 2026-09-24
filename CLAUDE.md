@@ -52,10 +52,22 @@ hostovanog RAG sistema za pitanja i odgovore nad tehnickom dokumentacijom
 
 ## Serving sloj
 
-- vLLM, OpenAI-compatible API.
-- Port **8000** — Qwen2.5-VL (captioning + generisanje).
-- Port **8001** — bge-m3 embedding (moze na CPU ako VRAM postane usko grlo).
-- GPU: `g5.xlarge` (1x NVIDIA A10G, 24GB VRAM).
+- Port **8000** — vLLM, OpenAI-compatible API, Qwen2.5-VL-7B-Instruct-AWQ
+  (captioning + generisanje).
+- Port **8001** — bge-m3 embedding. **Nije vLLM**, nego tanak FastAPI omotac
+  oko FlagEmbedding referentne implementacije. Razlog je u sledecem pasusu.
+- GPU: `g5.xlarge` (1x NVIDIA A10G, 24GB VRAM). Oba servisa dele istu karticu.
+
+**Zasto embedding nije na vLLM-u.** vLLM embedding endpoint vraca samo guste
+vektore, a sema indeksa ima i `sparse_weights`. Leksicke tezine bge-m3 daje
+jedino referentna FlagEmbedding implementacija (`BGEM3FlagModel` sa
+`return_sparse=True`). Servis izlaze oba oblika: `/v1/embeddings` je
+OpenAI-kompatibilan i vraca guste vektore, a `/embed` vraca i guste i retke.
+
+> **Otvoreno pitanje za fazu 5.** Retriever je specificiran kao "dense + BM25",
+> sto znaci da se `sparse_weights` puni ali se ne pretrazuje. Ili ga treba
+> ukljuciti u hibridni upit, ili ga izbaciti iz seme da ne stoji kao mrtav
+> podatak. Odluka nosi jedan pasus opravdanja u radu, pa je ne preskakati.
 
 **Ispravka na raniju dokumentaciju:** "AWQ 8-bit" ne postoji — AWQ je metoda
 4-bitne kvantizacije tezina. A10G je Ampere (sm_86) i nema FP8 podrsku (trazi
@@ -155,43 +167,176 @@ Bootstrap za `eu-central-1` je uradjen.
 | Faza | Stack | Stanje |
 |---|---|---|
 | 0 | skelet, `bin/app.ts`, bootstrap | gotovo |
-| 1 | `network-stack`, `storage-stack` | napisano, nije deploy-ovano |
-| 2 | `model-serving-stack` | **blokirano kvotom** |
-| 3 | `search-stack` — OpenSearch domen + hibridna sema | nije poceto |
-| 4 | `ingestion-stack` | nije poceto |
+| 1 | `network-stack`, `storage-stack` | **deploy-ovano, stoji na nalogu** |
+| 2 | `model-serving-stack` | **deploy-ovano i funkcionalno provereno** |
+| 3 | `search-stack` — OpenSearch domen + hibridna sema | **provereno pa sruseno radi ustede** |
+| 4 | `ingestion-stack` | **napisano, nije deploy-ovano** |
 | 5 | `query-stack` | nije poceto |
 | 6 | korpus, RAGAS, UI | nije poceto |
 
-### Blokator: GPU kvota
+Faza 1 je jedino sto trajno stoji na nalogu — VPC, subnet, IGW, dva SG-a, dva
+gateway endpointa, prazan S3 bucket i dve prazne DynamoDB tabele. Sve je
+besplatno ili se placa po koriscenju kog nema, dakle ~0 USD/mesec.
 
-Nalog nema kvotu ni za jednu GPU instancu (EC2 G/VT on-demand i spot = 0,
-EC2 P = 0, SageMaker ml.g5.* = 0). Zahtev je podnet 2026-09-18:
+Faza 3 je 2026-09-18 deploy-ovana, proverena i srusena. Potvrdjeno je da
+OpenSearch prihvata semu doslovno: `knn_vector` 1024 dim sa lucene HNSW
+(`cosinesimil`, `ef_construction` 128, `m` 16) i `sparse_weights` kao
+`rank_features`. Klaster je bio `green`. Ponovni `cdk deploy RagSearchStack`
+vraca isto stanje za ~20 minuta.
+
+### Faza 2 — rezultat validacionog prolaza (2026-09-18)
+
+Oba modela rade na jednoj A10G kartici, sa komotnom rezervom:
+
+| Mera | Vrednost |
+|---|---|
+| VRAM | **12549 MiB / 23028 MiB** |
+| bge-m3 gusti vektor | 1024 dimenzije — poklapa se sa `knn_vector` u indeksu |
+| bge-m3 retke tezine | rade (`/embed` vraca oba oblika) |
+| Qwen2.5-VL caption nad dijagramom | tacno procitao komponente i smer strelice |
+| Latencija generisanja | 2.5s za 120 tokena |
+
+Latencija je vazna zbog tvrdog limita API Gateway-a od 29s: 2.5s ostavlja
+dovoljno prostora za embedding i pretragu u istom zahtevu.
+
+**Skripta je potvrdjena kao reproducibilna.** Drugi prolaz, sa ispravljenim
+`vllm-bootstrap.sh` i bez ijedne rucne intervencije: instanca digla 13:58:24Z,
+`vllm-status=ready` u 14:09:56Z — **11 minuta i 32 sekunde** od nule do oba
+servisa. Straza za verzije je prijavila `nvcc=13.0 torch.cuda=13.0`.
+
+To je razlika koja se lako previdi: prvi prolaz je dokazao da KONFIGURACIJA
+radi, drugi da je AUTOMATIZACIJA reprodukuje. Za privatno hostovan sistem
+vredi samo ovo drugo.
+
+**Sest padova pre nego sto je proradilo.** Sveza `pip install vllm` na zvanicnom
+Deep Learning AMI-ju ne radi bez intervencija u okruzenju. Redom:
+
+1. `python3` je 3.12 bez `ensurepip` -> venv se ne pravi. Resenje: `python3.13`,
+   kojim i DLAMI pravi `/opt/pytorch`.
+2. `--limit-mm-per-prompt image=4` -> vLLM 0.29 provlaci vrednost kroz
+   `json.loads`. Ispravno je `'{"image":4}'`.
+3. flashinfer ne nalazi `nvcc` -> podrazumevano gleda `/usr/local/cuda`, kojeg nema.
+4. `ninja` van `PATH`-a -> systemd daje minimalan `PATH` bez venv-a.
+5. CCCL zaglavlja vs `nvcc` -> pip instalira nvcc **13.4** uz runtime zaglavlja
+   **13.0**. CCCL trazi TACNO poklapanje. DLAMI-jev nvcc je 13.0 i slaze se sa
+   `torch 2.13.0+cu130`.
+6. `-lcudart` nenadjen -> build linkuje sa `-L$CUDA_HOME/lib64`, DLAMI drzi
+   biblioteke u `lib/`. Resenje: simlink `lib64 -> lib`.
+
+Zajednicki simptom bugova 3-6 je varljiv: vLLM se digne, **ucita model u VRAM**
+(GPU pokaze ~10GB), pa padne na inicijalizaciji engine-a i GPU se vrati na nulu.
+`systemctl is-active` pritom pokazuje `active`, jer `Restart=on-failure` odmah
+dize novi pokusaj. Ne verovati tom izlazu — gledati `journalctl`.
+
+**Pinovane verzije** (potvrdjene 2026-09-18, u `ec2-userdata/vllm-bootstrap.sh`):
+
+| venv | paketi |
+|---|---|
+| `/opt/vllm-venv` | `vllm==0.29.0`, `torch==2.13.0`, `transformers==5.17.0`, `flashinfer-python==0.6.18` |
+| `/opt/embed-venv` | `FlagEmbedding==1.4.2`, `torch==2.14.0`, `transformers==5.17.0`, `sentence-transformers==6.1.0` |
+
+Dva venv-a traze **razlicit torch** (2.13.0 naspram 2.14.0). To nije propust nego
+razlog zbog kog su razdvojeni — u zajednickom okruzenju jedan bi prepisao drugog.
+Razresavanje oba skupa provereno `pip install --dry-run` na samoj instanci, bez
+sukoba.
+
+> **Verzije su pinovane.** Ne zato sto je drift izmeren — oba prolaza su vLLM-u
+> dala isti `torch 2.13.0` — nego zato sto nepinovan `pip install` po definiciji
+> ne garantuje isti rezultat sutra, a merenja u radu moraju biti ponovljiva.
+> `pip install vllm` je vec dao kombinaciju paketa
+> koja je sama sa sobom neusklađena (nvcc 13.4 + runtime 13.0). Merenja u radu
+> moraju biti ponovljiva, a `latest` to po definiciji nije. Alternativa je
+> zvanicni `vllm/vllm-openai` Docker image, koji dolazi sa uskladjenim CUDA
+> lancem i ne kompajlira nista u letu.
+
+### Faza 4 — odluke ugradjene u kod
+
+- **Nema cross-stack reference ka `search-stack`-u.** Endpoint domena ide kroz
+  SSM (`/rag/opensearch/endpoint`), a `IndexChunks` ga cita u vreme izvrsavanja.
+  Cross-stack export bi napravio zavisnost koju CloudFormation postuje pri
+  brisanju, pa `cdk destroy RagSearchStack` vise ne bi prolazio — cime bi propao
+  razlog zbog kog je domen izdvojen.
+- **`DistributedMap`, ne obicni `Map`.** Lista chunkova se cita iz S3 preko
+  `ItemReader`-a. Obicni Map bi je nosio kroz stanje i probio tvrd limit Step
+  Functions-a od **256KB** na prvom ozbiljnijem dokumentu.
+- **Lambde su `arm64` (Graviton).** Razvojna masina je Apple Silicon, pa se x86
+  paketi grade kroz emulaciju. PyMuPDF ima `manylinux2014_aarch64` wheel, pa
+  nema gradnje iz izvora — a Graviton je uz to oko petine jeftiniji.
+- **`_id` u OpenSearch-u je `chunk_id`.** Ponovni ingestion prepisuje dokumente
+  umesto da ih duplira.
+- **EventBridge pravilo je filtrirano na `raw/`.** Bez filtera bi manifesti i
+  slike koje sam tok upisuje ponovo okidali ingestion, u beskonacnoj petlji.
+- **Bulk vraca HTTP 200 i kad stavke ne prodju.** Greske su u telu, po stavci;
+  `IndexChunks` ih izdvaja i dize glasno.
+- Testovi: `python3 -m unittest discover -s test/python` — 78 testova, bez
+  ijedne instalacije (stdlib `unittest`, jer je lokalni Python 3.9).
+
+### Kvote (resen blokator)
+
+GPU kvota je **odobrena 2026-09-18**: `L-DB2E81BA` (Running On-Demand G and VT
+instances) je sada **8 vCPU**, potvrdjeno i preko API-ja, ne samo u mejlu.
+`g5.xlarge` je 4 vCPU, dakle staje jedna instanca komotno. Dostupna je u
+`eu-central-1a`, gde nam je i jedini subnet.
+
+**Ispravka na raniju dokumentaciju:** kvota za standardne instance
+(`L-1216C47A`) nije 5 vCPU nego **32**. Time otpada i potreba za zaobilaznicom
+preko CPU embedding servera — na 24GB staju oba modela zajedno, kako dizajn i
+predvidja.
 
 ```bash
-aws service-quotas list-requested-service-quota-change-history-by-quota \
-  --service-code ec2 --quota-code L-DB2E81BA \
-  --region eu-central-1 --profile lazar-private \
-  --query "RequestedQuotas[].[Status,DesiredValue,Created]" --output text
+aws service-quotas get-service-quota --service-code ec2 \
+  --quota-code L-DB2E81BA --region eu-central-1 --profile lazar-private \
+  --query "Quota.Value" --output text
 ```
-
-Dok kvota ne stigne, faze 1, 3 i 4 nisu blokirane: bge-m3 moze na CPU
-(`t3.large` staje u postojecu kvotu od 5 vCPU za standardne instance), pa ceo
-ingestion i retrieval put moze da se testira stvarno — samo captioning i
-generisanje ostaju stub.
 
 ## Sledeci korak
 
-1. `cdk deploy RagNetworkStack` + `RagStorageStack` — traje minut, kosta nista,
-   a potvrdjuje da profil stvarno ima permisije za deploy. Bolje da pukne na
-   VPC-u nego kasnije usred Step Functions stack-a.
-2. Faza 3 — `search-stack`. Ne zavisi od GPU-a i blokira fazu 4, dakle
-   najkorisnija stvar dok kvota ceka.
+Faza 2 je napisana i ceka jedan validacioni prolaz. Redosled je namerno takav
+da se najskuplja nepoznanica proveri pre nego sto se na njoj sagradi faza 4.
+
+1. `cdk deploy RagModelServingStack`, pa rucno dizanje ASG-a na 1. Potvrditi da
+   oba modela stanu na karticu, da `/health` odgovori na 8000 i 8001, i da se
+   instanca sama tagovala `vllm-status=ready`. Zatim odmah spustiti na 0.
+2. Faza 4 — `ingestion-stack`. Veci deo (`ExtractAndPrepare`, chunking,
+   serijalizacija tabela, skelet Step Functions toka) pise se i testira lokalno,
+   bez ijednog pokrenutog resursa.
+3. Integracioni prolaz faze 4: dici `RagSearchStack` i GPU zajedno, provuci
+   test korpus, potvrditi dokumente u indeksu, pa sve spustiti.
+
+Obrazac koji se pokazao dobro: **napisi besplatno, pusti jednom, proveri,
+srusi.** Na `search-stack`-u je kostao oko 3 centa.
 
 ## Poznati rizici
 
 - Deep Learning AMI: stvarno ime je `Deep Learning OSS Nvidia Driver AMI GPU
   PyTorch * (Ubuntu 24.04)`. Pattern `Deep Learning AMI GPU PyTorch*` iz ranije
-  dokumentacije **nece naci nista**.
+  dokumentacije **nece naci nista** — provereno, vraca nula slika. U kodu se
+  AMI uzima preko javnog SSM parametra
+  `/aws/service/deeplearning/ami/x86_64/oss-nvidia-driver-gpu-pytorch-2.12-ubuntu-24.04/latest/ami-id`,
+  a ne preko `MachineImage.lookup`, jer bi lookup zakucao AMI ID u
+  `cdk.context.json` koji je u `.gitignore`-u.
+- **GPU kapacitet je po zoni, i menja se iz sata u sat.** `g5.xlarge` je
+  2026-09-18 pao sa `InsufficientInstanceCapacity` u `eu-central-1a`, dok ga je
+  AWS nudio u `1b` i `1c`. Zato VPC ima `maxAzs: 3` iako sistem koristi jednu
+  instancu — da ASG ima gde da pokusa. Prazni public subnet-i ne kostaju nista.
+  Paznja: `describe-instance-type-offerings` pokazuje da tip POSTOJI u zoni, ne
+  da ima slobodnog kapaciteta; te dve stvari se lako pomesaju.
+- **Dodavanje zona trazi deploy OBA stack-a.** `VPCZoneIdentifier` na ASG-u je
+  fiksna lista subnet ID-jeva, pa `RagNetworkStack` pravi nove subnet-e, ali ih
+  ASG pokupi tek kad se i `RagModelServingStack` ponovo deploy-uje.
+- **Dva vLLM procesa na istoj kartici:** vLLM podrazumevano uzme ~90% VRAM-a.
+  Bez eksplicitnog `--gpu-memory-utilization` prvi proces pojede sve i drugi ne
+  startuje. U `vllm-bootstrap.sh` je ograniceno na 0.62 za Qwen, ostatak ide
+  bge-m3 i rezervi.
+- **Lambda u VPC-u nema internet.** Nema NAT-a, a Lambda ENI ne dobija javnu IP
+  ni u public subnet-u. Zato u `network-stack`-u postoje gateway endpointi za
+  S3 i DynamoDB (besplatni), a svaka Lambda u VPC-u mora imati
+  `allowPublicSubnet: true` — inace CDK odbija synth. Preko S3 endpoint-a ide i
+  odgovor CloudFormation custom resource-a; bez njega deploy ne pukne nego
+  **visi do timeout-a**.
+- **Opisi SG pravila imaju ogranicen skup znakova:**
+  `a-zA-Z0-9. _-:/()#,@[]+=&;{}!$*`. Znak `>` nije dozvoljen, pa `->` u opisu
+  rusi stack tek u `CREATE` fazi — `cdk synth` i `cdk diff` to ne uhvate.
 - vLLM cold start (ucitavanje 7B modela u VRAM) traje desetine sekundi do par
   minuta — ne testirati cim EC2 predje u "running", cekati `/health`.
 - bge-m3 nema potvrdenu validaciju za srpski u zvanicnim benchmarcima

@@ -1,1 +1,2 @@
-# zavisnosti za caption_chunk (faza 4/5)
+# zavisnosti za caption_chunk (faza 4)
+# boto3 i urllib su u Lambda runtime-u; `inference.py` dolazi kao Lambda Layer.

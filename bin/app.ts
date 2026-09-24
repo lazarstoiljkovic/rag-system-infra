@@ -2,6 +2,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { NetworkStack } from '../lib/network-stack';
 import { StorageStack } from '../lib/storage-stack';
+import { SearchStack } from '../lib/search-stack';
 import { ModelServingStack } from '../lib/model-serving-stack';
 import { IngestionStack } from '../lib/ingestion-stack';
 import { QueryStack } from '../lib/query-stack';
@@ -27,6 +28,14 @@ const storage = new StorageStack(app, 'RagStorageStack', {
   env,
   // prebaciti na true pre finalne evaluacije
   retainData: false,
+});
+
+// Vektorska baza u zasebnom stack-u: indeks je izveden podatak i sme da se
+// srusi radi ustede, dok S3 i DynamoDB ostaju netaknuti.
+new SearchStack(app, 'RagSearchStack', {
+  env,
+  vpc: network.vpc,
+  lambdaSg: network.lambdaSg,
 });
 
 new ModelServingStack(app, 'RagModelServingStack', {

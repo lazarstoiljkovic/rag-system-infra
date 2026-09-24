@@ -30,11 +30,29 @@ export class NetworkStack extends cdk.Stack {
     super(scope, id, props);
 
     this.vpc = new ec2.Vpc(this, 'RagVpc', {
-      maxAzs: 1,
+      // Tri zone, iako sistem koristi jednu instancu. Nije zbog dostupnosti
+      // nego zbog KAPACITETA: g5.xlarge je oskudan i AWS ga nema u svakoj zoni
+      // u svakom trenutku. Sa jednom zonom ASG nema gde da pokusa i dizanje
+      // pada sa InsufficientInstanceCapacity — sto se i desilo u eu-central-1a.
+      // Prazni public subnet-i ne kostaju nista, a NAT-a nema pa nema ni
+      // troska po zoni.
+      maxAzs: 3,
       natGateways: 0,
       subnetConfiguration: [
         { name: 'public', subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
       ],
+    });
+
+    // Lambde u ovom VPC-u nemaju izlaz na internet: nema NAT-a, a Lambda ENI
+    // ne dobija javnu IP adresu ni u public subnet-u. Gateway endpointi su
+    // jedini put do S3 i DynamoDB — i besplatni su, za razliku od interface
+    // varijante. Preko S3 endpoint-a ide i odgovor CloudFormation custom
+    // resource-a (PUT na presigned URL), pa bez njega deploy visi do timeout-a.
+    this.vpc.addGatewayEndpoint('S3Endpoint', {
+      service: ec2.GatewayVpcEndpointAwsService.S3,
+    });
+    this.vpc.addGatewayEndpoint('DynamoDbEndpoint', {
+      service: ec2.GatewayVpcEndpointAwsService.DYNAMODB,
     });
 
     this.lambdaSg = new ec2.SecurityGroup(this, 'LambdaSg', {
@@ -54,13 +72,13 @@ export class NetworkStack extends cdk.Stack {
       this.inferenceSg.addIngressRule(
         this.lambdaSg,
         ec2.Port.tcp(port),
-        `Lambda -> model serving (${port})`,
+        `Lambda ka model serving (${port})`,
       );
       // Razvoj: rucni curl sa developerove masine.
       this.inferenceSg.addIngressRule(
         ec2.Peer.ipv4(props.developerCidr),
         ec2.Port.tcp(port),
-        `Developer -> model serving (${port})`,
+        `Developer ka model serving (${port})`,
       );
     }
 

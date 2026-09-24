@@ -1,1 +1,2 @@
-# zavisnosti za embed_chunks (faza 4/5)
+# zavisnosti za embed_chunks (faza 4)
+# boto3 je u runtime-u; `inference.py` dolazi kao Lambda Layer.

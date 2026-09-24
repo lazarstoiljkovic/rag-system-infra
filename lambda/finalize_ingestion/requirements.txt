@@ -1,1 +1,2 @@
-# zavisnosti za finalize_ingestion (faza 4/5)
+# zavisnosti za finalize_ingestion (faza 4)
+# Nijedna: boto3 je u Lambda runtime-u.

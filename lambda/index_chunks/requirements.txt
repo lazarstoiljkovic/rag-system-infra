@@ -1,1 +1,3 @@
-# zavisnosti za index_chunks (faza 4/5)
+# zavisnosti za index_chunks (faza 4)
+# Nijedna: botocore (SigV4) i urllib su u Lambda runtime-u. Namerno bez
+# opensearch-py, da paket ostane bez Docker build-a.

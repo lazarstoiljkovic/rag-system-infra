@@ -1,1 +1,4 @@
-# zavisnosti za extract_and_prepare (faza 4/5)
+# zavisnosti za extract_and_prepare (faza 4)
+# Samo ekstrakcija trazi ove pakete; chunking.py i elements.py su bez zavisnosti.
+PyMuPDF==1.24.14
+python-docx==1.1.2
