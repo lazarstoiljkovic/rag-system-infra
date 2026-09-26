@@ -19,6 +19,8 @@ import urllib.request
 from typing import Dict, List, Optional
 
 import boto3
+from botocore.config import Config
+from botocore.exceptions import ConnectTimeoutError, EndpointConnectionError
 
 logger = logging.getLogger()
 
@@ -26,7 +28,12 @@ INFERENCE_TAG_NAME = os.environ.get("INFERENCE_TAG_NAME", "vllm-server")
 VLM_PORT = int(os.environ.get("VLM_PORT", "8000"))
 EMBEDDING_PORT = int(os.environ.get("EMBEDDING_PORT", "8001"))
 
-ec2 = boto3.client("ec2")
+# Kratki timeout-i, namerno. EC2 API je iz VPC-a dostupan SAMO preko interface
+# endpoint-a, a on postoji samo dok je RagSearchStack podignut. Bez njega bi
+# poziv visio do timeout-a Lambde (preko API Gateway-a: 504 posle 29 s, sto
+# izgleda kao spor model). Ovako pada za par sekundi, sa jasnom porukom.
+ec2 = boto3.client("ec2", config=Config(
+    connect_timeout=3, read_timeout=5, retries={"max_attempts": 2, "mode": "standard"}))
 
 
 class InferenceUnavailable(RuntimeError):
@@ -46,13 +53,19 @@ def find_inference_ip() -> str:
     Koristi se PRIVATNA adresa: saobracaj ostaje unutar VPC-a, a security group
     ionako pusta samo Lambda SG.
     """
-    response = ec2.describe_instances(
-        Filters=[
-            {"Name": "tag:Name", "Values": [INFERENCE_TAG_NAME]},
-            {"Name": "tag:vllm-status", "Values": ["ready"]},
-            {"Name": "instance-state-name", "Values": ["running"]},
-        ]
-    )
+    try:
+        response = ec2.describe_instances(
+            Filters=[
+                {"Name": "tag:Name", "Values": [INFERENCE_TAG_NAME]},
+                {"Name": "tag:vllm-status", "Values": ["ready"]},
+                {"Name": "instance-state-name", "Values": ["running"]},
+            ]
+        )
+    except (ConnectTimeoutError, EndpointConnectionError):
+        raise InferenceUnavailable(
+            "EC2 API nije dostupan iz VPC-a — interface endpoint postoji samo "
+            "dok je RagSearchStack podignut. Da li su podignuti GPU i RagSearchStack?"
+        )
     for reservation in response.get("Reservations", []):
         for instance in reservation.get("Instances", []):
             ip = instance.get("PrivateIpAddress")

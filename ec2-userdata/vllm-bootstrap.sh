@@ -132,6 +132,7 @@ fi
 cat > /opt/embedding_server.py <<'PYEOF'
 """bge-m3 embedding servis: guste + retke reprezentacije, isti tekstualni model."""
 import os
+import threading
 from typing import List, Union
 
 from fastapi import FastAPI
@@ -141,6 +142,19 @@ from FlagEmbedding import BGEM3FlagModel
 app = FastAPI()
 # use_fp16 prepolovljuje zauzece VRAM-a uz zanemarljiv gubitak tacnosti.
 model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)
+
+# FastAPI obicne (def) endpoint-e izvrsava u VISE NITI istovremeno, a model na
+# GPU-u nije bezbedan za paralelne pozive: 2026-09-26 je 11 istovremenih
+# ingestion tokova srusilo servis sa SIGSEGV (core dump), a EmbedChunks je
+# dobio "Connection reset by peer". Brava serijalizuje pozive modela; zahtevi
+# i dalje stizu paralelno, samo cekaju red. Batch po zahtevu ostaje, pa
+# propusnost prakticno ne pati.
+_model_lock = threading.Lock()
+
+
+def _encode(texts, sparse):
+    with _model_lock:
+        return model.encode(texts, return_dense=True, return_sparse=sparse)
 
 
 class EmbedRequest(BaseModel):
@@ -161,7 +175,7 @@ def health():
 def embeddings(request: EmbedRequest):
     """OpenAI-kompatibilan oblik — samo gusti vektori."""
     texts = _as_list(request.input)
-    dense = model.encode(texts, return_dense=True, return_sparse=False)["dense_vecs"]
+    dense = _encode(texts, sparse=False)["dense_vecs"]
     return {
         "object": "list",
         "model": request.model,
@@ -176,7 +190,7 @@ def embeddings(request: EmbedRequest):
 def embed(request: EmbedRequest):
     """Gusti vektor + leksicke tezine, spremno za hibridni indeks."""
     texts = _as_list(request.input)
-    output = model.encode(texts, return_dense=True, return_sparse=True)
+    output = _encode(texts, sparse=True)
     results = []
     for i, vector in enumerate(output["dense_vecs"]):
         # rank_features u OpenSearch-u trazi imena osobina kao stringove.

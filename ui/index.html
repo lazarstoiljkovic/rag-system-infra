@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="sr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAG nad dokumentacijom</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <h1>Pitanja nad tehničkom dokumentacijom</h1>
+      <p class="sub">Privatno hostovan RAG sistem · sintetički korpus „Nexa Tech Solutions“</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <details class="card settings" id="settings">
+      <summary>Podešavanja veze</summary>
+      <div class="grid2">
+        <label>Adresa API-ja
+          <input id="apiUrl" type="url" placeholder="https://…/v1/query" autocomplete="off">
+        </label>
+        <label>API ključ
+          <input id="apiKey" type="password" placeholder="x-api-key" autocomplete="off">
+        </label>
+      </div>
+      <p class="hint">Ključ se čuva samo u ovom pregledaču. Vrednost:
+        <code>aws apigateway get-api-key --api-key &lt;id&gt; --include-value</code>
+        (izlaz <code>ApiKeyCommand</code> stack-a <code>RagQueryStack</code>).</p>
+    </details>
+
+    <section class="card">
+      <label>Primer pitanja
+        <select id="examples"><option value="">— izaberi ili upiši svoje pitanje —</option></select>
+      </label>
+      <div id="expected" class="expected" hidden></div>
+
+      <label>Pitanje
+        <textarea id="question" rows="3" maxlength="2000"
+          placeholder="npr. Na kom portu radi payment-service i koliki mu je timeout?"></textarea>
+      </label>
+
+      <div class="controls">
+        <label class="inline">Pretraga
+          <select id="retrieval">
+            <option value="dense_bm25">dense + BM25 (osnovna)</option>
+            <option value="dense_bm25_sparse">dense + BM25 + sparse</option>
+          </select>
+        </label>
+        <label class="inline">k
+          <input id="k" type="number" min="1" max="20" value="5">
+        </label>
+        <div class="buttons">
+          <button type="button" data-run="A">Varijanta A</button>
+          <button type="button" data-run="B">Varijanta B</button>
+          <button type="button" data-run="AB" class="primary">Uporedi A i B</button>
+        </div>
+      </div>
+      <p class="hint">A: generator vidi samo tekst (opis slike umesto slike).
+        B: uz opis dobija i originalnu sliku.</p>
+    </section>
+
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <section id="results" class="results"></section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

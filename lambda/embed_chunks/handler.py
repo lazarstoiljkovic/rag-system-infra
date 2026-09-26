@@ -19,7 +19,14 @@ from typing import Any, Dict, List
 
 import boto3
 
-from batching import DEFAULT_BATCH_SIZE, attach_embeddings, chunked, drop_empty, embeddable_text
+from batching import (
+    DEFAULT_BATCH_SIZE,
+    attach_embeddings,
+    chunked,
+    drop_empty,
+    embeddable_text,
+    outputs_from_result_file,
+)
 from inference import embed, find_inference_ip
 
 logger = logging.getLogger()
@@ -42,7 +49,7 @@ def _load_chunks(bucket: str, key: str) -> List[Dict[str, Any]]:
     DistributedMap ne pise jedan fajl nego manifest koji pokazuje na vise
     `SUCCEEDED_*.json` datoteka, a svaki zapis u njima ima oblik
     `{"Input": ..., "Output": ...}`. Zanima nas `Output`, jer je to chunk posle
-    captioning-a.
+    captioning-a (raspakivanje je u `outputs_from_result_file`).
     """
     payload = _read_json(bucket, key)
 
@@ -55,8 +62,7 @@ def _load_chunks(bucket: str, key: str) -> List[Dict[str, Any]]:
 
     chunks: List[Dict[str, Any]] = []
     for entry in results:
-        for record in _read_json(bucket, entry["Key"]):
-            chunks.append(record.get("Output", record))
+        chunks.extend(outputs_from_result_file(_read_json(bucket, entry["Key"])))
     return chunks
 
 

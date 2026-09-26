@@ -1,5 +1,6 @@
 """Testovi za grupisanje u batch-eve i spajanje sa vektorima."""
 
+import json
 import os
 import sys
 import unittest
@@ -14,6 +15,7 @@ from batching import (  # noqa: E402
     chunked,
     drop_empty,
     embeddable_text,
+    outputs_from_result_file,
 )
 
 
@@ -85,6 +87,23 @@ class DropEmptyTest(unittest.TestCase):
     def test_slika_bez_caption_a_se_izbacuje(self):
         neuspela = _chunk("s", text="", ctype="image", image_ref="images/x.png")
         self.assertEqual(drop_empty([neuspela]), [])
+
+
+
+class TestOutputsFromResultFile(unittest.TestCase):
+    def test_output_kao_string_se_raspakuje(self):
+        # Ovako DistributedMap stvarno pise SUCCEEDED_*.json: Output je string.
+        chunk = _chunk("d#00001", text="caption", ctype="image", image_ref="images/d/000.png")
+        records = [{"Input": json.dumps(_chunk("d#00001", text="")), "Output": json.dumps(chunk)}]
+        self.assertEqual(outputs_from_result_file(records), [chunk])
+
+    def test_output_kao_objekat_prolazi(self):
+        chunk = _chunk("d#00002")
+        self.assertEqual(outputs_from_result_file([{"Output": chunk}]), [chunk])
+
+    def test_zapis_bez_omotaca_je_sam_chunk(self):
+        chunk = _chunk("d#00003")
+        self.assertEqual(outputs_from_result_file([chunk]), [chunk])
 
 
 if __name__ == "__main__":

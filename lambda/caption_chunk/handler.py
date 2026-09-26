@@ -21,7 +21,7 @@ import os
 import boto3
 
 from inference import chat_completion, find_inference_ip, image_as_data_url
-from prompts import CLASSIFY_PROMPT, classify, prompt_for
+from prompts import CLASSIFY_PROMPT, classify, clean_caption, prompt_for
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -73,7 +73,7 @@ def handler(event, _context):
 
     # Klasifikacija je kratka namerno: treba jedna rec, ne obrazlozenje.
     kind = classify(ask(CLASSIFY_PROMPT, max_tokens=16))
-    caption = ask(prompt_for(kind), max_tokens=768).strip()
+    caption = clean_caption(ask(prompt_for(kind), max_tokens=768))
 
     logger.info("caption za %s (%s): %d znakova", chunk.get("chunk_id"), kind, len(caption))
 

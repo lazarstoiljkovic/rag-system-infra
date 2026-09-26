@@ -14,6 +14,7 @@ from prompts import (  # noqa: E402
     DIAGRAM,
     DIAGRAM_PROMPT,
     classify,
+    clean_caption,
     prompt_for,
 )
 
@@ -68,6 +69,53 @@ class PromptForTest(unittest.TestCase):
     def test_promptovi_zabranjuju_pogadjanje(self):
         self.assertIn("Ne tumaci", DIAGRAM_PROMPT)
         self.assertIn("umesto da je pogodis", CHART_PROMPT)
+
+    def test_promptovi_traze_da_se_uputstva_ne_ponavljaju(self):
+        # Prolaz 2026-09-26: caption je ponavljao tekst prompta, sto je sum u
+        # embedding-u i BM25 — i to isti sum u svakom captionu.
+        for prompt in (DIAGRAM_PROMPT, CHART_PROMPT):
+            self.assertIn("bez ponavljanja ovih uputstava", prompt)
+
+    def test_promptovi_zadaju_sablon_odgovora(self):
+        for polje in ("Komponente:", "Veze:", "Granice:"):
+            self.assertIn(polje, DIAGRAM_PROMPT)
+        for polje in ("Tip:", "X osa:", "Y osa:", "Vrednosti:", "Legenda:"):
+            self.assertIn(polje, CHART_PROMPT)
+
+    def test_dijagram_prompt_trazi_svaku_strelicu(self):
+        # Prolaz 2026-09-26: izostavljena je jedna od sest strelica.
+        self.assertIn("SVAKU strelicu", DIAGRAM_PROMPT)
+        self.assertIn("nijedna strelica nije izostavljena", DIAGRAM_PROMPT)
+
+
+class CleanCaptionTest(unittest.TestCase):
+    # Stvarni izlaz modela iz prolaza 2026-09-26 (skracen).
+    STVARNI = ("Naslov: Propusnost Kestrel-a po verziji\nTip: stubicasti\n"
+               "Vrednosti:\n- v3.1: 27.9\nLegenda: nema\n\n"
+               "Pravila:\n- TACNE VREDNOSTI za svaku tacku ili stubic: 27.9\n")
+
+    def test_odseca_blok_pravila(self):
+        cist = clean_caption(self.STVARNI)
+        self.assertTrue(cist.endswith("Legenda: nema"))
+        self.assertNotIn("Pravila", cist)
+
+    def test_varijante_zapisa_naslova(self):
+        for naslov in ("Pravila:", "**Pravila:**", "  PRAVILA :"):
+            self.assertEqual(clean_caption("Tip: x\n" + naslov + "\n- y"), "Tip: x")
+
+    def test_rec_pravila_usred_reda_se_ne_dira(self):
+        tekst = "Veze:\n- Evaluator pravila -> Budilnik: alarm"
+        self.assertEqual(clean_caption(tekst), tekst)
+
+    def test_prazno(self):
+        self.assertEqual(clean_caption(None), "")
+        self.assertEqual(clean_caption("  x  "), "x")
+
+    def test_sablon_je_poslednji_deo_prompta(self):
+        # Model nastavlja ono sto je poslednje; pravila idu pre sablona.
+        for prompt, poslednje in ((DIAGRAM_PROMPT, "Granice:"), (CHART_PROMPT, "Legenda:")):
+            self.assertLess(prompt.index("Pravila:"), prompt.index(poslednje))
+            self.assertNotIn("\n- ", prompt[prompt.index(poslednje):])
 
 
 if __name__ == "__main__":

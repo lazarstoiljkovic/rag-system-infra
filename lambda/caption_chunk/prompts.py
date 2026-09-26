@@ -8,7 +8,27 @@ tipa "opisi sliku" daje opis koji zvuci lepo a ne sadrzi podatke potrebne za
 odgovor — recimo, kaze da grafikon "prikazuje rast" bez ijedne vrednosti sa
 ose. Varijanta A bi tada gubila od varijante B zbog losih promptova, a ne zbog
 odsustva slike, i ablacija bi merila pogresnu stvar.
+
+Oba prompta odvajaju UPUTSTVA od OBLIKA ODGOVORA (sablon sa kratkim poljima).
+Prva verzija je nabrajala zahteve kao numerisanu listu, i integracioni prolaz
+2026-09-26 je pokazao dve mane:
+
+  - Model je "odjekivao" prompt: caption grafikona je ponavljao naslove
+    zahteva ("TACNE VREDNOSTI svake tacke...") i zavrsnu recenicu o
+    necitljivim vrednostima. Taj tekst ulazi u embedding i BM25 kao sum, a
+    isti je u svakom captionu — pa svi captioni lice jedni na druge.
+  - Caption dijagrama je izostavio jednu od sest strelica (ruter -> cvor A),
+    iako je smer ostalih pet bio tacan.
+
+Sablon resava prvo, a pravilo "jedna stavka po strelici" uz zavrsnu proveru
+cilja drugo. Drugi prolaz (isti dan) je potvrdio da je izostavljena strelica
+resena, ali je model posle popunjenog sablona prepisao ceo blok "Pravila:".
+Zato su pravila sada PRE sablona (sablon je poslednji, pa ga model nastavlja),
+a `clean_caption` deterministicki odseca sve od reda "Pravila:" — ako se odjek
+ipak pojavi, ne sme stici do embedding-a.
 """
+
+import re
 
 DIAGRAM = "diagram"
 CHART = "chart"
@@ -27,29 +47,61 @@ CLASSIFY_PROMPT = (
 # tip veze i PRAVAC strelica. Pravac je cest izvor gresaka u RAG odgovorima, jer
 # "A zove B" i "B zove A" imaju istu listu komponenti.
 DIAGRAM_PROMPT = (
-    "Ovo je dijagram arhitekture softverskog sistema. Opisi ga precizno i "
-    "iscrpno, na srpskom jeziku:\n"
-    "1. Navedi SVE komponente i njihove tacne nazive onako kako pisu na slici.\n"
-    "2. Za svaku vezu navedi koje dve komponente spaja i KOJI JE PRAVAC "
-    "strelice (od koje ka kojoj).\n"
-    "3. Navedi tip veze ako je oznacen (HTTP, gRPC, red poruka, i slicno).\n"
-    "4. Navedi grupisanja i granice ako postoje (VPC, podmreza, klaster).\n"
-    "Ne tumaci i ne dodaji zakljucke kojih nema na slici."
+    "Opisi dijagram arhitekture softverskog sistema sa slike, na srpskom jeziku.\n"
+    "Pravila:\n"
+    "- Za SVAKU strelicu na slici napisi tacno jednu stavku pod Veze. PRAVAC je "
+    "od komponente iz koje strelica izlazi ka komponenti u koju ulazi.\n"
+    "- Pre nego sto zavrsis, proveri da nijedna strelica nije izostavljena.\n"
+    "- Tip veze (HTTP, gRPC, red poruka i slicno) navedi samo ako pise na slici.\n"
+    "- Ne tumaci i ne dodaji nista cega nema na slici.\n\n"
+    "Odgovor napisi tacno u ovom obliku, bez uvoda i bez ponavljanja ovih "
+    "uputstava:\n\n"
+    "Komponente: <nazivi svih komponenti, tacno kako pisu na slici>\n"
+    "Veze:\n"
+    "- <izvor> -> <odrediste>: <oznaka veze sa slike, ili bez oznake>\n"
+    "Granice: <grupisanja i granice (VPC, podmreza, klaster) i koje komponente "
+    "obuhvataju, ili nema>"
 )
 
 # Kod grafikona je kriticna TACNA VREDNOST. Opis bez brojeva je za varijantu A
 # bezvredan, jer se iz njega ne moze odgovoriti ni na jedno kvantitativno pitanje.
 CHART_PROMPT = (
-    "Ovo je grafikon sa podacima. Opisi ga precizno i iscrpno, na srpskom "
-    "jeziku:\n"
-    "1. Navedi tip grafikona (linijski, stubicasti, tortni, i slicno).\n"
-    "2. Navedi naziv i jedinicu obe ose, kao i opseg vrednosti.\n"
-    "3. Navedi TACNE VREDNOSTI svake tacke ili stubica koje mozes procitati, "
-    "zajedno sa pripadajucom oznakom na osi.\n"
-    "4. Navedi legendu i naziv svake serije ako ih ima.\n"
-    "Ako neku vrednost ne mozes pouzdano procitati, napisi da je necitljiva "
-    "umesto da je pogodis."
+    "Opisi grafikon sa slike, na srpskom jeziku.\n"
+    "Pravila:\n"
+    "- Navedi TACNE VREDNOSTI za svaku tacku ili stubic: ispisane na grafikonu, "
+    "a ako nisu ispisane, procitane sa ose.\n"
+    "- Nazive, oznake i jedinice prepisi tacno kako pisu na slici.\n"
+    "- Ako vrednost ne mozes pouzdano procitati, upisi necitljivo umesto da je "
+    "pogodis.\n\n"
+    "Odgovor napisi tacno u ovom obliku, bez uvoda i bez ponavljanja ovih "
+    "uputstava:\n\n"
+    "Naslov: <naslov grafikona, ili nema>\n"
+    "Tip: <linijski, stubicasti, tortni, ili drugi>\n"
+    "X osa: <naziv i jedinica>\n"
+    "Y osa: <naziv, jedinica i opseg>\n"
+    "Vrednosti:\n"
+    "- <oznaka na osi ili u legendi>: <vrednost>\n"
+    "Legenda: <nazivi serija, ili nema>"
 )
+
+
+# Red kojim pocinje odjek uputstava u odgovoru modela.
+_ECHO = re.compile(r"^\s*\**\s*pravila\s*\**\s*:", re.IGNORECASE | re.MULTILINE)
+
+
+def clean_caption(raw: str) -> str:
+    """
+    Odseca odjek uputstava: sve od prvog reda koji pocinje sa "Pravila:".
+
+    Deterministicka zastita iza prompta. Odjek je sum koji je ISTI u svakom
+    captionu, pa bi u embedding-u i BM25 cinio da svi captioni lice jedni na
+    druge — sto je gore od obicnog suma.
+    """
+    text = raw or ""
+    match = _ECHO.search(text)
+    if match:
+        text = text[: match.start()]
+    return text.strip()
 
 
 def classify(raw_answer: str) -> str:

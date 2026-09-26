@@ -6,6 +6,7 @@ merljiv: po pozivu se placa rezija HTTP-a i prolaz kroz model, pa bi hiljadu
 chunkova znacilo hiljadu odlazaka na GPU umesto tridesetak.
 """
 
+import json
 from typing import Any, Dict, Iterable, Iterator, List, Sequence
 
 # Kompromis izmedju broja poziva i velicine tela zahteva. Prevelik batch
@@ -61,6 +62,23 @@ def attach_embeddings(
         enriched["sparse_weights"] = vector.get("sparse") or {}
         out.append(enriched)
     return out
+
+
+def outputs_from_result_file(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Chunkovi iz jednog `SUCCEEDED_*.json` fajla koji pise DistributedMap.
+
+    Svaki zapis ima oblik `{"Input": ..., "Output": ...}`, gde je `Output`
+    JSON SERIJALIZOVAN KAO STRING, ne objekat. Bez raspakivanja bi dalji kod
+    dobio string umesto chunk-a i pao na prvom `.get`.
+    """
+    chunks: List[Dict[str, Any]] = []
+    for record in records:
+        output = record.get("Output", record)
+        if isinstance(output, str):
+            output = json.loads(output)
+        chunks.append(output)
+    return chunks
 
 
 def drop_empty(chunks: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:

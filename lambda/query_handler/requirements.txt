@@ -1,1 +1,3 @@
-# zavisnosti za query_handler (faza 4/5)
+# zavisnosti za query_handler (faza 5)
+# Nijedna: boto3, botocore (SigV4) i urllib su u Lambda runtime-u, a
+# `inference.py` dolazi kao Lambda Layer.

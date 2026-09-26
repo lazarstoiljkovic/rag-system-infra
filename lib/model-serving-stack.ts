@@ -51,6 +51,23 @@ export class ModelServingStack extends cdk.Stack {
   private static readonly DLAMI_SSM_PARAM =
     '/aws/service/deeplearning/ami/x86_64/oss-nvidia-driver-gpu-pytorch-2.12-ubuntu-24.04/latest/ami-id';
 
+  /**
+   * Tipovi GPU instance po prioritetu. Oba nose ISTU karticu — 1x A10G, 24GB —
+   * i razlikuju se samo u CPU-u i RAM-u (4 vCPU/16GB naspram 8 vCPU/32GB).
+   * Merenja zato ostaju uporediva bez obzira koji tip ASG dobije.
+   *
+   * Razlog je kapacitet, ne performanse: 2026-09-24 `g5.xlarge` nije bio
+   * dostupan ni u jednoj od tri zone preko pola sata
+   * (`InsufficientInstanceCapacity`). AWS vodi svaki tip kao zaseban pool, pa
+   * je `g5.2xlarge` ponekad slobodan kad `xlarge` nije — bez garancije, jer
+   * dele istu vrstu hosta. Skuplji je, pa je drugi po redu.
+   *
+   * Drugi GPU (npr. `g6.xlarge`, L4) NAMERNO nije na listi: menjao bi hardver
+   * opisan u radu i validiran u fazi 2, a pinovane CUDA/torch verzije na njemu
+   * nisu proverene. Kvota L-DB2E81BA je 8 vCPU, pa oba tipa staju.
+   */
+  public static readonly INSTANCE_TYPES = ['g5.xlarge', 'g5.2xlarge'];
+
   public readonly autoScalingGroup: autoscaling.AutoScalingGroup;
 
   constructor(scope: Construct, id: string, props: ModelServingStackProps) {
@@ -83,24 +100,19 @@ export class ModelServingStack extends cdk.Stack {
       ),
     );
 
-    this.autoScalingGroup = new autoscaling.AutoScalingGroup(this, 'VllmAsg', {
-      vpc: props.vpc,
-      // Public subnet sa javnom IP: instanci treba internet da skine tezine
-      // modela, a NAT Gateway je odbacen kao neopravdan trosak. Izolaciju
-      // nosi inferenceSg, koji prima saobracaj samo sa Lambda SG-a.
-      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
-      associatePublicIpAddress: true,
-      instanceType: new ec2.InstanceType('g5.xlarge'),
+    const launchTemplate = new ec2.LaunchTemplate(this, 'VllmLaunchTemplate', {
       machineImage: ec2.MachineImage.fromSsmParameter(ModelServingStack.DLAMI_SSM_PARAM, {
         os: ec2.OperatingSystemType.LINUX,
       }),
+      // Tip se ovde samo podrazumeva; stvarni izbor radi lista u ASG-u ispod.
+      instanceType: new ec2.InstanceType(ModelServingStack.INSTANCE_TYPES[0]),
+      // Javna IP: instanci treba internet da skine tezine modela, a NAT
+      // Gateway je odbacen kao neopravdan trosak. Izolaciju nosi inferenceSg,
+      // koji prima saobracaj samo sa Lambda SG-a.
+      associatePublicIpAddress: true,
       securityGroup: props.inferenceSg,
       role,
       userData,
-      // Bez desiredCapacity: ASG tada krece od minCapacity, dakle od nule, i
-      // ponovni deploy ne budi instancu koju si malopre rucno ugasio.
-      minCapacity: 0,
-      maxCapacity: 1,
       requireImdsv2: true,
       blockDevices: [
         {
@@ -109,13 +121,37 @@ export class ModelServingStack extends cdk.Stack {
           // (~15GB) i tezine Qwen2.5-VL-AWQ i bge-m3 (~10GB), dakle ~55GB.
           // 100GB ostavlja rezervu za HF cache i logove. Volumen se brise sa
           // instancom, pa dok je ASG na nuli ne kosta nista.
-          volume: autoscaling.BlockDeviceVolume.ebs(100, {
-            volumeType: autoscaling.EbsDeviceVolumeType.GP3,
+          volume: ec2.BlockDeviceVolume.ebs(100, {
+            volumeType: ec2.EbsDeviceVolumeType.GP3,
             encrypted: true,
             deleteOnTermination: true,
           }),
         },
       ],
+    });
+
+    this.autoScalingGroup = new autoscaling.AutoScalingGroup(this, 'VllmAsg', {
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      // Lista tipova po prioritetu umesto jednog tipa. ASG proba prvi, pa
+      // sledeci tek kad prvog nema ni u jednoj zoni. Vidi INSTANCE_TYPES.
+      mixedInstancesPolicy: {
+        launchTemplate,
+        launchTemplateOverrides: ModelServingStack.INSTANCE_TYPES.map((type) => ({
+          instanceType: new ec2.InstanceType(type),
+        })),
+        instancesDistribution: {
+          onDemandAllocationStrategy: autoscaling.OnDemandAllocationStrategy.PRIORITIZED,
+          // Iskljucivo on-demand: spot instancu AWS sme da ugasi usred
+          // evaluacije, a za GPU je spot kapacitet ionako jos oskudniji.
+          onDemandBaseCapacity: 0,
+          onDemandPercentageAboveBaseCapacity: 100,
+        },
+      },
+      // Bez desiredCapacity: ASG tada krece od minCapacity, dakle od nule, i
+      // ponovni deploy ne budi instancu koju si malopre rucno ugasio.
+      minCapacity: 0,
+      maxCapacity: 1,
     });
 
     // Tag po kome Lambde pronalaze instancu preko ec2:DescribeInstances.

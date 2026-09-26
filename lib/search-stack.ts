@@ -43,6 +43,16 @@ export class SearchStack extends cdk.Stack {
   /** Dimenzija gustog vektora: bge-m3 daje 1024. Izmereno, ne pretpostavljeno. */
   public static readonly VECTOR_DIM = 1024;
 
+  /**
+   * Search pipeline-i za hibridnu pretragu, po obliku upita. Pravi ih IndexInit
+   * (`lambda/index_init/pipelines.py`), a QueryHandler ih bira po zahtevu.
+   * Obicne konstante, ne cross-stack reference — isti razlog kao za SSM ispod.
+   */
+  public static readonly PIPELINES = {
+    dense_bm25: 'rag-hybrid-dense-bm25',
+    dense_bm25_sparse: 'rag-hybrid-dense-bm25-sparse',
+  };
+
   /** SSM putanje preko kojih Lambde nalaze domen, bez cross-stack zavisnosti. */
   public static readonly ENDPOINT_PARAM = '/rag/opensearch/endpoint';
   public static readonly INDEX_NAME_PARAM = '/rag/opensearch/index-name';
@@ -61,6 +71,32 @@ export class SearchStack extends cdk.Stack {
       'Lambda ka OpenSearch (HTTPS)',
     );
 
+    // Interface endpointi za EC2 i SSM API.
+    //
+    // Lambde su u VPC-u bez NAT-a i vide samo gateway endpointe (S3, DynamoDB).
+    // A dva poziva idu ka javnim AWS API-jima: `ec2:DescribeInstances`
+    // (pronalazenje GPU instance po tagu) i `ssm:GetParameter` (endpoint ovog
+    // domena). Bez endpointa oba vise do timeout-a, bez jasne greske.
+    //
+    // Zasto bas ovde, a ne u network-stack-u: interface endpoint se placa po
+    // satu (~0.012 USD/h po zoni), za razliku od gateway varijante. Trebaju
+    // samo dok ingestion ili query tok radi, a tada ionako mora stajati i
+    // domen. Ovako se rusi zajedno sa njim i ne kosta nista tokom pauza.
+    //
+    // Jedna zona je dovoljna: privatni DNS razresava ime servisa na ENI u
+    // eu-central-1a, a Lambde iz ostalih zona ga dosezu unutar VPC-a.
+    for (const [id, service] of [
+      ['Ec2ApiEndpoint', ec2.InterfaceVpcEndpointAwsService.EC2],
+      ['SsmApiEndpoint', ec2.InterfaceVpcEndpointAwsService.SSM],
+    ] as const) {
+      new ec2.InterfaceVpcEndpoint(this, id, {
+        vpc: props.vpc,
+        service,
+        subnets: { subnets: [props.vpc.publicSubnets[0]] },
+        privateDnsEnabled: true,
+      });
+    }
+
     this.domain = new opensearch.Domain(this, 'RagDomain', {
       // 2.19, a ne 3.x: hibridni search je ovde zreo i dokumentovan
       // (normalization processor postoji od 2.10), a opensearch-py
@@ -73,7 +109,9 @@ export class SearchStack extends cdk.Stack {
       },
       ebs: { volumeSize: 10, volumeType: ec2.EbsDeviceVolumeType.GP3 },
       vpc: props.vpc,
-      // VPC ima maxAzs: 1, pa postoji tacno jedan subnet.
+      // VPC ima tri subnet-a (zbog GPU kapaciteta), ali domen sa jednim
+      // cvorom i bez zoneAwareness sme da bude u tacno jednom. Prvi je
+      // eu-central-1a.
       vpcSubnets: [{ subnets: [props.vpc.publicSubnets[0]] }],
       securityGroups: [this.domainSg],
       zoneAwareness: { enabled: false },
@@ -126,7 +164,8 @@ export class SearchStack extends cdk.Stack {
     // kad se sema promeni. Kreiranje je idempotentno.
     const indexInitResource = new cdk.CustomResource(this, 'IndexInit', {
       serviceToken: indexInit.functionArn,
-      properties: { schemaVersion: '1' },
+      // 2: dodati search pipeline-i za hibridnu pretragu (faza 5).
+      properties: { schemaVersion: '2' },
     });
 
     // Bez ove linije CloudFormation sme da pokrene IndexInit pre nego sto se

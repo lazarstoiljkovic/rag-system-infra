@@ -226,6 +226,22 @@ export class IngestionStack extends cdk.Stack {
       }),
     });
 
+    // Ponovni pokusaj kad Lambda odbije poziv zbog konkurentnosti. Nalog ima
+    // limit od 10 istovremenih Lambdi (provereno 2026-09-26), a osam
+    // dokumenata ubacenih odjednom, svaki sa Map-om od cetiri paralelna
+    // captiona, ga probija — dva toka su pala sa 429 ("Rate Exceeded").
+    // Podrazumevani retry LambdaInvoke-a ovu gresku NE pokriva. Jitter
+    // rasipa ponovne pokusaje, da se svi ne vrate u istoj sekundi.
+    for (const task of [extractTask, captionTask, embedTask, indexTask, finalizeTask]) {
+      task.addRetry({
+        errors: ['Lambda.TooManyRequestsException'],
+        interval: cdk.Duration.seconds(2),
+        backoffRate: 2,
+        maxAttempts: 6,
+        jitterStrategy: sfn.JitterType.FULL,
+      });
+    }
+
     this.stateMachine = new sfn.StateMachine(this, 'IngestionStateMachine', {
       definitionBody: sfn.DefinitionBody.fromChainable(
         extractTask.next(mapChunks).next(embedTask).next(indexTask).next(finalizeTask),

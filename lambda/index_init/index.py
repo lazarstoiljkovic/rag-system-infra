@@ -18,12 +18,15 @@ timeout-a, sto je znatno teze dijagnostikovati.
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.request
 
 import boto3
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
+
+from pipelines import all_pipelines
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -91,7 +94,31 @@ def _index_definition() -> dict:
     }
 
 
+# Domen prijavljen kao CREATE_COMPLETE ne znaci da njegov endpoint vec prima
+# TLS konekcije. 2026-09-26 je prvi zahtev 35 s posle kreiranja pao sa
+# "SSL: UNEXPECTED_EOF_WHILE_READING", CloudFormation je vratio ceo stack
+# unazad — a brisanje domena traje 15-45 min. Zato se mrezne greske ponavljaju
+# sa rastucim razmakom, ukupno do ~4 minuta (Lambda ima 5).
+_RETRY_DELAYS_S = (5, 10, 20, 30, 45, 60, 60)
+
+
 def _signed_request(method: str, path: str, body: dict | None = None):
+    """Kao `_signed_request_once`, ali ponavlja pri mreznim i TLS greskama."""
+    for attempt, delay in enumerate(_RETRY_DELAYS_S + (None,), start=1):
+        try:
+            return _signed_request_once(method, path, body)
+        # OSError pokriva URLError, ssl.SSLError (i kad pukne tek pri citanju
+        # odgovora), ConnectionError i TimeoutError. HTTP greske (4xx/5xx) ovde
+        # ne stizu — `_signed_request_once` ih vraca kao (status, telo).
+        except OSError as error:
+            if delay is None:
+                raise
+            logger.warning("Domen jos ne odgovara (%s, pokusaj %d), cekam %d s.",
+                           error, attempt, delay)
+            time.sleep(delay)
+
+
+def _signed_request_once(method: str, path: str, body: dict | None = None):
     """Potpisan SigV4 zahtev ka domenu. Vraca (status, telo)."""
     url = f"https://{ENDPOINT}{path}"
     data = json.dumps(body).encode("utf-8") if body is not None else None
@@ -128,6 +155,25 @@ def _create_index() -> str:
 
     logger.info("Indeks %s kreiran.", INDEX_NAME)
     return f"{INDEX_NAME} (kreiran)"
+
+
+def _put_search_pipelines() -> str:
+    """
+    Search pipeline-i za hibridnu pretragu (vidi `pipelines.py`).
+
+    `PUT` nad pipeline-om je idempotentan — prepisuje postojeci — pa se pri
+    svakom deploy-u search-stack-a pipeline-i dovode u stanje iz koda. Za
+    razliku od indeksa, ovde nema podataka koji bi se izgubili.
+    """
+    names = []
+    for name, body in all_pipelines().items():
+        status, payload = _signed_request("PUT", f"/_search/pipeline/{name}", body)
+        if status not in (200, 201):
+            raise RuntimeError(f"Pipeline {name} nije prihvacen ({status}): {payload}")
+        status, payload = _signed_request("GET", f"/_search/pipeline/{name}")
+        logger.info("Prihvacen pipeline %s (%s): %s", name, status, payload)
+        names.append(name)
+    return ", ".join(names)
 
 
 def _log_effective_state() -> None:
@@ -179,6 +225,7 @@ def handler(event, context):
     try:
         if event["RequestType"] in ("Create", "Update"):
             detail = _create_index()
+            detail += "; pipeline-i: " + _put_search_pipelines()
             _log_effective_state()
         else:
             # Delete: indeks se NE brise. Ako neko srusi stack da ustedi novac,

@@ -1,0 +1,210 @@
+"""
+Pitanja sa tacnim odgovorima za demo korpus (Nexa Tech Solutions, Nexa Booking).
+
+Tipovi izvora:
+  tekst, tabela       odgovor stoji u tekstu ili tabeli dokumenta
+  dijagram, grafikon  odgovor je na slici
+  vise-dokumenata     odgovor trazi kombinovanje dva dokumenta
+
+`samo_na_slici` = True: odgovor NE postoji ni u jednom tekstu ni u jednoj
+tabeli korpusa, nego samo na slici. Na njima se ocekuje razlika izmedju
+varijante A (caption) i B (caption + slika) — ako caption propusti cinjenicu.
+
+`tesko_za_opis` = True: podskup prethodnih, gde je cinjenica namerno teska za
+opis recima — pripadnost grupi (namespace) ili strelica BEZ natpisa. Prolaz
+2026-09-26 je pokazao da dobar caption zabelezi natpise i vrednosti, pa se A i
+B tu izjednace; prednost B se pokazala tek na pripadnosti grupi. Ova pitanja
+cilje bas taj slucaj.
+
+`dokaz` proverava `generate.py` automatski:
+  - za `samo_na_slici`: dokaz NE sme postojati u tekstu nijednog dokumenta, a
+    MORA postojati na slici;
+  - za ostala pitanja: svaki dokaz MORA postojati u tekstu navedenih dokumenata.
+"""
+
+QUESTIONS = [
+    # --- Arhitektura -------------------------------------------------------
+    {"id": "A1", "dokumenti": ["booking-arhitektura"], "tip": "tabela",
+     "pitanje": "Na kom portu radi payment-service i koliki mu je timeout?",
+     "odgovor": "Port 8102, timeout 8 sekundi.", "dokaz": ["8102"]},
+    {"id": "A2", "dokumenti": ["booking-arhitektura"], "tip": "tekst",
+     "pitanje": "Koliko dugo se lista slobodnih termina čuva u kešu?",
+     "odgovor": "300 sekundi, u Redis-u.", "dokaz": ["300"]},
+    {"id": "A3", "dokumenti": ["booking-arhitektura"], "tip": "dijagram", "samo_na_slici": True,
+     "pitanje": "Iz koje baze catalog-service čita podatke?",
+     "odgovor": "Iz PostgreSQL read replike.", "dokaz": ["read replica"]},
+    {"id": "A4", "dokumenti": ["booking-arhitektura"], "tip": "grafikon", "samo_na_slici": True,
+     "pitanje": "Koji endpoint ima najveću p95 latenciju i kolika je ona?",
+     "odgovor": "POST /payments, 468 ms.", "dokaz": ["468"]},
+
+    # --- CI/CD -------------------------------------------------------------
+    {"id": "C1", "dokumenti": ["ci-cd-proces"], "tip": "tabela",
+     "pitanje": "Kakve podatke koristi staging okruženje?",
+     "odgovor": "Anonimizovanu kopiju produkcije.", "dokaz": ["anonimizovana kopija produkcije"]},
+    {"id": "C2", "dokumenti": ["ci-cd-proces"], "tip": "tekst",
+     "pitanje": "Kada je dozvoljen deploy u produkciju?",
+     "odgovor": "Samo utorkom i četvrtkom, od 10 do 14 časova.", "dokaz": ["utorkom i četvrtkom"]},
+    {"id": "C3", "dokumenti": ["ci-cd-proces"], "tip": "dijagram", "samo_na_slici": True,
+     "pitanje": "Ko odobrava deploy u produkciju?",
+     "odgovor": "Release manager.", "dokaz": ["release manager"]},
+    {"id": "C4", "dokumenti": ["ci-cd-proces"], "tip": "dijagram", "samo_na_slici": True,
+     "pitanje": "Gde se čuva Docker image pre deploy-a na staging?",
+     "odgovor": "U container registry-ju.", "dokaz": ["registry"]},
+    {"id": "C5", "dokumenti": ["ci-cd-proces"], "tip": "grafikon", "samo_na_slici": True,
+     "pitanje": "Koliko je u proseku trajao pipeline u aprilu 2026?",
+     "odgovor": "14,2 minuta.", "dokaz": ["14.2"]},
+
+    # --- Frontend (DOCX) ---------------------------------------------------
+    {"id": "F1", "dokumenti": ["frontend-standardi"], "tip": "tabela",
+     "pitanje": "Koliki je najveći dozvoljeni bundle size po ruti?",
+     "odgovor": "250 KB (gzip).", "dokaz": ["250 KB"]},
+    {"id": "F2", "dokumenti": ["frontend-standardi"], "tip": "tekst",
+     "pitanje": "Šta pull request mora da sadrži ako menja UI?",
+     "odgovor": "Screenshot pre i posle izmene.", "dokaz": ["screenshot"]},
+    {"id": "F3", "dokumenti": ["frontend-standardi"], "tip": "dijagram",
+     "samo_na_slici": True, "tesko_za_opis": True,
+     "pitanje": "Odakle React komponenta dobija podatke koje prikazuje?",
+     "odgovor": "Iz Store-a (strelica Store -> React komponenta, bez natpisa).", "dokaz": ["Store"]},
+
+    # --- API ---------------------------------------------------------------
+    {"id": "R1", "dokumenti": ["booking-api-v3"], "tip": "tabela",
+     "pitanje": "Do kada je moguće otkazati rezervaciju preko API-ja?",
+     "odgovor": "Najkasnije 2 sata pre termina.", "dokaz": ["2 sata pre termina"]},
+    {"id": "R2", "dokumenti": ["booking-api-v3"], "tip": "tekst",
+     "pitanje": "Koji status API vraća kada je termin u međuvremenu zauzet?",
+     "odgovor": "409.", "dokaz": ["409"]},
+    {"id": "R3", "dokumenti": ["booking-api-v3"], "tip": "dijagram", "samo_na_slici": True,
+     "pitanje": "Koliki depozit se naplaćuje pri novoj rezervaciji?",
+     "odgovor": "20%.", "dokaz": ["20%"]},
+    {"id": "R4", "dokumenti": ["booking-api-v3"], "tip": "dijagram", "samo_na_slici": True,
+     "pitanje": "Kojim kanalima krajnji korisnik dobija obaveštenje o zakazanom terminu?",
+     "odgovor": "SMS + e-mail.", "dokaz": ["SMS + e-mail"]},
+
+    # --- SLA ---------------------------------------------------------------
+    {"id": "S1", "dokumenti": ["sla-i-podrska"], "tip": "tabela",
+     "pitanje": "Koliki uptime garantuje plan Business?",
+     "odgovor": "99,9%.", "dokaz": ["99,9%"]},
+    {"id": "S2", "dokumenti": ["sla-i-podrska"], "tip": "tekst",
+     "pitanje": "Koliko unapred se najavljuje planirano održavanje?",
+     "odgovor": "Najmanje 72 sata.", "dokaz": ["72 sata"]},
+    {"id": "S3", "dokumenti": ["sla-i-podrska"], "tip": "dijagram", "samo_na_slici": True,
+     "pitanje": "Kome L1 support prosleđuje pitanja o računu?",
+     "odgovor": "Billing timu.", "dokaz": ["Billing"]},
+    {"id": "S4", "dokumenti": ["sla-i-podrska"], "tip": "grafikon", "samo_na_slici": True,
+     "pitanje": "U kom mesecu drugog kvartala 2026. je uptime bio najniži i koliki je bio?",
+     "odgovor": "U maju, 99,82%.", "dokaz": ["99.82"]},
+
+    # --- Performanse (DOCX) ------------------------------------------------
+    {"id": "P1", "dokumenti": ["izvestaj-performanse-q2-2026"], "tip": "tabela",
+     "pitanje": "Kolika je p95 latencija u scenariju plaćanja na load testu?",
+     "odgovor": "512 ms.", "dokaz": ["512"]},
+    {"id": "P2", "dokumenti": ["izvestaj-performanse-q2-2026"], "tip": "tekst",
+     "pitanje": "Šta je bio bottleneck na load testu i zašto?",
+     "odgovor": "payment-service, zbog ograničenja eksternog payment provajdera na broj "
+                "istovremenih konekcija.", "dokaz": ["Bottleneck", "payment provajdera"]},
+    {"id": "P3", "dokumenti": ["izvestaj-performanse-q2-2026"], "tip": "grafikon",
+     "samo_na_slici": True,
+     "pitanje": "Koja stranica ima najsporiji LCP na mobilnim uređajima?",
+     "odgovor": "Booking, 2,9 s.", "dokaz": ["2.9"]},
+
+    # --- Kubernetes --------------------------------------------------------
+    {"id": "K1", "dokumenti": ["plan-migracije-kubernetes"], "tip": "tabela",
+     "pitanje": "Koji servis se prvi migrira na Kubernetes i kada?",
+     "odgovor": "notification-service, u januaru 2027.", "dokaz": ["januar 2027"]},
+    {"id": "K2", "dokumenti": ["plan-migracije-kubernetes"], "tip": "tekst",
+     "pitanje": "Gde ostaje baza podataka posle prelaska na Kubernetes?",
+     "odgovor": "Van klastera, kao managed PostgreSQL servis.", "dokaz": ["van klastera"]},
+    {"id": "K3", "dokumenti": ["plan-migracije-kubernetes"], "tip": "dijagram",
+     "samo_na_slici": True, "tesko_za_opis": True,
+     "pitanje": "U kom namespace-u će raditi payment-service?",
+     "odgovor": "U namespace-u pci.", "dokaz": ["pci"]},
+    {"id": "K4", "dokumenti": ["plan-migracije-kubernetes"], "tip": "dijagram",
+     "samo_na_slici": True, "tesko_za_opis": True,
+     "pitanje": "Koji servisi će raditi u namespace-u core?",
+     "odgovor": "booking-service i catalog-service.", "dokaz": ["core"]},
+    {"id": "K5", "dokumenti": ["plan-migracije-kubernetes"], "tip": "grafikon",
+     "samo_na_slici": True,
+     "pitanje": "U kom mesecu 2027. se očekuje najveći trošak infrastrukture i koliki?",
+     "odgovor": "U martu, 8,3 hiljade EUR.", "dokaz": ["8.3"]},
+
+    # --- Pravilnik o radu (DOCX) --------------------------------------------
+    {"id": "H1", "dokumenti": ["pravilnik-o-radu"], "tip": "tekst",
+     "pitanje": "Koliko dana godišnjeg odmora ima zaposleni sa deset godina staža u firmi?",
+     "odgovor": "24 radna dana (22 osnovna + po jedan za svakih pet godina staža).",
+     "dokaz": ["22 radna dana", "pet godina staža"]},
+    {"id": "H2", "dokumenti": ["pravilnik-o-radu"], "tip": "tabela",
+     "pitanje": "Koliko dana plaćenog odsustva zaposleni dobija za selidbu?",
+     "odgovor": "2 radna dana.", "dokaz": ["selidba", "2 radna dana"]},
+    {"id": "H3", "dokumenti": ["pravilnik-o-radu"], "tip": "tekst",
+     "pitanje": "Kojim danima je dolazak u kancelariju obavezan?",
+     "odgovor": "Ponedeljkom i sredom.", "dokaz": ["ponedeljkom i sredom"]},
+    {"id": "H4", "dokumenti": ["pravilnik-o-radu"], "tip": "dijagram", "samo_na_slici": True,
+     "pitanje": "Ko odobrava odsustvo duže od 10 radnih dana?",
+     "odgovor": "Department head.", "dokaz": ["Department head"]},
+
+    # --- Organizacija i pozicije ------------------------------------------
+    {"id": "O1", "dokumenti": ["organizacija-i-pozicije"], "tip": "tabela",
+     "pitanje": "Koliki je raspon bruto zarade za poziciju Senior developer?",
+     "odgovor": "2.600–3.800 EUR mesečno.", "dokaz": ["2.600"]},
+    {"id": "O2", "dokumenti": ["organizacija-i-pozicije"], "tip": "tekst",
+     "pitanje": "Koliko zaposlenih ima firma i koliko ih radi u inženjerskim timovima?",
+     "odgovor": "86 zaposlenih, od toga 61 u inženjeringu.", "dokaz": ["86", "61"]},
+    {"id": "O3", "dokumenti": ["organizacija-i-pozicije"], "tip": "dijagram",
+     "samo_na_slici": True, "tesko_za_opis": True,
+     "pitanje": "U kojoj kancelariji radi Payments team?",
+     "odgovor": "U kancelariji u Nišu.", "dokaz": ["Kancelarija Niš"]},
+    {"id": "O4", "dokumenti": ["organizacija-i-pozicije"], "tip": "dijagram", "samo_na_slici": True,
+     "pitanje": "Ko je u upravi firme zadužen za ljude i kome odgovara?",
+     "odgovor": "Head of People, odgovara CEO-u.", "dokaz": ["Head of People"]},
+
+    # --- Finansijski izvestaj ---------------------------------------------
+    {"id": "N1", "dokumenti": ["finansijski-izvestaj-h1-2026"], "tip": "tekst",
+     "pitanje": "Koliki je bio prihod u prvoj polovini 2026. i koliki je rast u odnosu na prošlu godinu?",
+     "odgovor": "2,84 miliona EUR, rast od 18%.", "dokaz": ["2,84", "18%"]},
+    {"id": "N2", "dokumenti": ["finansijski-izvestaj-h1-2026"], "tip": "tabela",
+     "pitanje": "Koliki je bio prihod od pretplata na Nexa Booking u drugom kvartalu 2026?",
+     "odgovor": "1.052.000 EUR.", "dokaz": ["1.052.000"]},
+    {"id": "N3", "dokumenti": ["finansijski-izvestaj-h1-2026"], "tip": "grafikon",
+     "samo_na_slici": True,
+     "pitanje": "U kom mesecu prve polovine 2026. je prihod bio najveći i koliki je bio?",
+     "odgovor": "U junu, 529 hiljada EUR.", "dokaz": ["529"]},
+    {"id": "N4", "dokumenti": ["finansijski-izvestaj-h1-2026"], "tip": "grafikon",
+     "samo_na_slici": True,
+     "pitanje": "Koliki udeo operativnih troškova odlazi na cloud?",
+     "odgovor": "11%.", "dokaz": ["11%"]},
+
+    # --- Politika bezbednosti ---------------------------------------------
+    {"id": "B1", "dokumenti": ["politika-bezbednosti"], "tip": "tekst",
+     "pitanje": "Koliko znakova mora imati lozinka i koliko često se menja?",
+     "odgovor": "Najmanje 14 znakova; periodična promena se ne traži, samo posle "
+                "sumnje na kompromitaciju.", "dokaz": ["14 znakova"]},
+    {"id": "B2", "dokumenti": ["politika-bezbednosti"], "tip": "tabela",
+     "pitanje": "Kojoj klasi pripadaju podaci o platnim karticama?",
+     "odgovor": "Strogo poverljivo.", "dokaz": ["Strogo poverljivo", "platnim karticama"]},
+    {"id": "B3", "dokumenti": ["politika-bezbednosti"], "tip": "dijagram", "samo_na_slici": True,
+     "pitanje": "Ko se obaveštava kada bezbednosni incident uključuje curenje ličnih podataka?",
+     "odgovor": "Pravna služba, koja ga u roku od 72 sata prijavljuje Povereniku.",
+     "dokaz": ["Pravna služba"]},
+
+    # --- vise dokumenata ---------------------------------------------------
+    {"id": "X1", "dokumenti": ["sla-i-podrska", "izvestaj-performanse-q2-2026"],
+     "tip": "vise-dokumenata",
+     "pitanje": "Zašto je uptime u maju 2026. bio niži nego u ostalim mesecima kvartala?",
+     "odgovor": "Zbog incidenta 17. maja: istekao je TLS sertifikat api-gateway-a, pa aplikacija "
+                "nije bila dostupna 80 minuta.",
+     "dokaz": ["80 minuta", "sertifikat"]},
+    {"id": "X2", "dokumenti": ["booking-arhitektura", "izvestaj-performanse-q2-2026"],
+     "tip": "vise-dokumenata",
+     "pitanje": "Koji tim je vlasnik servisa koji je bio bottleneck na load testu?",
+     "odgovor": "Payments team (payment-service).", "dokaz": ["Payments team", "Bottleneck"]},
+    {"id": "X3", "dokumenti": ["plan-migracije-kubernetes", "booking-arhitektura"],
+     "tip": "vise-dokumenata",
+     "pitanje": "Na kom portu danas radi servis koji se prvi migrira na Kubernetes?",
+     "odgovor": "notification-service, port 8103.", "dokaz": ["8103", "notification-service"]},
+    {"id": "X4", "dokumenti": ["organizacija-i-pozicije", "booking-arhitektura"],
+     "tip": "vise-dokumenata",
+     "pitanje": "Koji servis održava tim koji radi iz kancelarije u Nišu, pored Notifications team-a?",
+     "odgovor": "Payments team, vlasnik payment-service-a (port 8102).",
+     "napomena": "Kancelarija se vidi samo na organizacionoj semi; servis iz tabele arhitekture.",
+     "dokaz": ["Payments team", "payment-service"]},
+]
