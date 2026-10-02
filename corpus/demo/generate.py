@@ -5,7 +5,7 @@ Generator demo korpusa i provera pitanja.
     /tmp/corpus-venv/bin/pip install PyMuPDF==1.24.14 python-docx==1.1.2 matplotlib
     /tmp/corpus-venv/bin/python corpus/demo/generate.py
 
-Pravi `corpus/demo/dokumenti/` (5 PDF + 2 DOCX) i `pitanja.json`, pa:
+Pravi `corpus/demo/dokumenti/` (22 dokumenta, PDF i DOCX) i `pitanja.json`, pa:
 
   1. proverava svako pitanje (vidi `questions.py`): odgovor "samo na slici" ne
      sme se naci ni u jednom tekstu korpusa, a mora postojati na slici; ostali
@@ -27,8 +27,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "..", "..", "lambda", "extract_and_prepare"))
 
-from documents import AUTHOR, DOCUMENTS  # noqa: E402
-from questions import QUESTIONS  # noqa: E402
+from documents import AUTHOR, DOCUMENTS as BASE_DOCUMENTS  # noqa: E402
+from documents_dodatni import DOCUMENTS_DODATNI  # noqa: E402
+from questions import QUESTIONS as BASE_QUESTIONS  # noqa: E402
+from questions_dodatna import QUESTIONS_DODATNA, izmene_postojecih  # noqa: E402
+
+# Prosirenje (2026-10-01): novi dokumenti i pitanja su u zasebnim modulima,
+# a postojeca pitanja koja ometaci (stare verzije dokumenata) cine
+# dvosmislenim dobijaju precizniji tekst (`izmene_postojecih`).
+DOCUMENTS = BASE_DOCUMENTS + DOCUMENTS_DODATNI
+QUESTIONS = izmene_postojecih(BASE_QUESTIONS) + QUESTIONS_DODATNA
 from render import extracted_text, render_docx, render_pdf  # noqa: E402
 
 OUT_DIR = os.path.join(HERE, "dokumenti")
@@ -45,10 +53,24 @@ def _figure_text(blocks):
         if kind != "figure":
             continue
         spec = content["spec"]
+        kind = spec.get("kind")
+        fmt = spec.get("fmt", "{:.1f}")
         if "nodes" in spec:
             parts += [label for _, _, label in spec["nodes"].values()]
             parts += [edge[2] for edge in spec["edges"]]
             parts += [group[4] for group in spec.get("groups", [])]
+        elif "participants" in spec:
+            parts += list(spec["participants"]) + [m[2] for m in spec["messages"]]
+        elif kind in ("multiline", "grouped"):
+            parts += [spec["title"], spec["x_label"], spec["y_label"]]
+            parts += list(spec["categories"]) + list(spec["series"])
+            if kind == "grouped":   # vrednosti su ispisane samo na grupisanim
+                parts += [fmt.format(v) for vals in spec["series"].values() for v in vals]
+        elif kind == "pie":
+            parts += [spec["title"]] + list(spec["labels"])
+            parts += [fmt.format(v) + "%" for v in spec["values"]]
+        elif kind == "gantt":
+            parts += [spec["title"]] + list(spec["months"]) + [t[0] for t in spec["tasks"]]
         else:
             fmt = spec.get("fmt", "{:.1f}")
             parts += [spec["title"], spec["x_label"], spec["y_label"]]
@@ -77,11 +99,19 @@ def check_questions(texts, figures):
                 errors.append("{}: nepoznat dokument {}".format(q["id"], doc))
         if q.get("tesko_za_opis") and not q.get("samo_na_slici"):
             errors.append("{}: 'tesko_za_opis' ima smisla samo uz 'samo_na_slici'".format(q["id"]))
+        if q.get("naziv_i_u_tekstu") and not (q.get("samo_na_slici") and q.get("napomena")):
+            errors.append("{}: 'naziv_i_u_tekstu' trazi 'samo_na_slici' i obrazlozenje u "
+                          "'napomena'".format(q["id"]))
         for key in q["dokaz"]:
             if q.get("samo_na_slici"):
                 # Kao zasebna rec, da "71" ne bi "nasao" u "1971" i slicno.
-                leaks = [v for v in _variants(key)
-                         if re.search(r"(?<![\w.,]){}(?![\w])".format(re.escape(v)), all_text)]
+                # Izuzetak `naziv_i_u_tekstu`: odgovor je naziv (servisa,
+                # projekta) koji postoji i u tekstu, ali cinjenica — koji od
+                # njih — postoji samo na slici. Curenje se tada ne proverava,
+                # a pitanje mora imati obrazlozenje u `napomena`.
+                leaks = [] if q.get("naziv_i_u_tekstu") else [
+                    v for v in _variants(key)
+                    if re.search(r"(?<![\w.,]){}(?![\w])".format(re.escape(v)), all_text)]
                 if leaks:
                     errors.append("{}: '{}' postoji u TEKSTU korpusa, a oznaceno je kao "
                                   "samo na slici".format(q["id"], key))
@@ -142,6 +172,7 @@ def main():
     print("  {:32s} {:>3d} / {} / {}".format("UKUPNO", total["text"], total["table"],
                                             total["image"]))
 
+    print("dokumenata: {}".format(len(DOCUMENTS)))
     with open(os.path.join(HERE, "pitanja.json"), "w", encoding="utf-8") as f:
         json.dump(QUESTIONS, f, ensure_ascii=False, indent=2)
     only_image = sum(1 for q in QUESTIONS if q.get("samo_na_slici"))

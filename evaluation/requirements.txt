@@ -1,0 +1,5 @@
+# Lokalno okruzenje za evaluaciju (nije deo Lambda paketa).
+#   python3 -m venv evaluation/.venv && evaluation/.venv/bin/pip install -r eval/requirements.txt
+ragas==0.4.3
+openai>=1.0.0
+boto3

@@ -97,3 +97,39 @@ class OblikPorukaTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PartSeparationTest(unittest.TestCase):
+    """
+    Sablon za razgovor modela Qwen spaja tekstualne delove BEZ razmaka. Kad
+    se tekst izvora zavrsavao bez praznog reda, zalepio se za zaglavlje
+    sledeceg (`...300 sekundi.[3] (tabela, ...)`), i model je u merenju
+    2026-10-01 navodio izvor za jedan veci od pravog.
+    """
+
+    def _joined(self, messages):
+        return "".join(p["text"] for p in messages[1]["content"] if p["type"] == "text")
+
+    def test_tekst_izvora_se_ne_lepi_za_sledece_zaglavlje(self):
+        contexts = [_ctx(1, text="prvi"), _ctx(2, text="drugi"), _ctx(3, text="treci")]
+        joined = self._joined(build_messages("p?", contexts, VARIANT_A, {})[0])
+        for marker in ("[2]", "[3]", "Pitanje:"):
+            self.assertIn("\n\n" + marker, joined)
+
+    def test_slika_je_unutar_bloka_svog_izvora(self):
+        ref = "images/d/000.png"
+        contexts = [_ctx(1, "image", "opis", image_ref=ref), _ctx(2, text="drugi")]
+        content = build_messages("p?", contexts, VARIANT_B, {ref: "data:x"})[0][1]["content"]
+        kinds = [p["type"] for p in content]
+        i = kinds.index("image_url")
+        self.assertTrue(content[i - 1]["text"].startswith("[1] "))
+        self.assertTrue(content[i + 1]["text"].startswith("opis"))
+
+    def test_otisak_zavisi_od_formata_poruke(self):
+        import prompting
+        before = prompting.prompt_fingerprint()
+        prompting.PROMPT_FORMAT += 1
+        try:
+            self.assertNotEqual(before, prompting.prompt_fingerprint())
+        finally:
+            prompting.PROMPT_FORMAT -= 1

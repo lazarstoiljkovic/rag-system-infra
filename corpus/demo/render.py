@@ -156,11 +156,125 @@ def draw_chart(spec, path):
     plt.close(fig)
 
 
-def render_figure(figure, path):
-    if "nodes" in figure["spec"]:
-        draw_diagram(figure["spec"], path)
+def draw_sequence(spec, path):
+    """
+    Dijagram sekvence. spec:
+      participants  [natpis, ...] — redom, sleva nadesno
+      messages      [(od, ka, natpis) ili (od, ka, natpis, "povratna")]
+                    od/ka su indeksi u `participants`; "povratna" crta
+                    isprekidanu strelicu (odgovor)
+
+    Poruke se numerisu redom ("1. ..."), jer je redosled upravo ono sto
+    pitanja traze, a bez brojeva bi ga caption morao da zakljuci iz polozaja.
+    """
+    parts = spec["participants"]
+    msgs = spec["messages"]
+    step = 30
+    width = step * len(parts)
+    height = 18 + 9 * len(msgs)
+    fig, ax = plt.subplots(figsize=(11, 11 * height / width), dpi=150)
+    ax.set_xlim(0, width)
+    ax.set_ylim(0, height)
+    ax.axis("off")
+    xs = [step / 2 + i * step for i in range(len(parts))]
+    top = height - 6
+    for x, label in zip(xs, parts):
+        ax.add_patch(FancyBboxPatch((x - 12, top - 4), 24, 8, boxstyle="round,pad=0.3",
+                                    facecolor=_FILL, edgecolor=_INK, linewidth=1.5))
+        ax.text(x, top, label, ha="center", va="center", fontsize=9)
+        ax.plot([x, x], [top - 4.5, 2], linestyle=(0, (3, 3)), color="#888888", linewidth=1)
+    for n, msg in enumerate(msgs, start=1):
+        src, dst, label = msg[:3]
+        back = len(msg) > 3 and msg[3] == "povratna"
+        y = top - 9 - (n - 1) * 9
+        ax.add_patch(FancyArrowPatch((xs[src], y), (xs[dst], y), arrowstyle="-|>",
+                                     mutation_scale=13, linewidth=1.4, color=_INK,
+                                     linestyle="--" if back else "-"))
+        text = "{}. {}".format(n, label) if label else "{}.".format(n)
+        ax.text((xs[src] + xs[dst]) / 2, y + 1.6, text, ha="center", va="bottom",
+                fontsize=8.3, bbox=dict(facecolor="white", edgecolor="none", pad=0.5))
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
+_SERIES = ["#3b6ea5", "#d98b2b", "#4f9d69", "#b04a5a", "#7a5aa6"]
+
+
+def draw_multi_chart(spec, path):
+    """
+    Grafikoni sa vise serija ili delova. spec["kind"]:
+      multiline  categories, series {naziv: vrednosti}; vrednosti NISU ispisane
+                 (citaju se sa ose) — namerno teze za opis recima
+      grouped    categories, series {naziv: vrednosti}; vrednosti ispisane
+      pie        labels, values (procenti, zbir 100)
+      gantt      months [natpisi], tasks [(naziv, prvi_mesec, poslednji_mesec)]
+                 indeksi meseca od 0; trajanje se cita sa ose, bez brojeva
+    """
+    kind = spec["kind"]
+    fmt = spec.get("fmt", "{:.1f}")
+    if kind == "pie":
+        fig, ax = plt.subplots(figsize=(6.5, 4.5), dpi=150)
+        ax.pie(spec["values"], labels=spec["labels"], colors=_SERIES + ["#999999"],
+               autopct=lambda p: fmt.format(p) + "%", startangle=90, counterclock=False,
+               textprops={"fontsize": 9.5})
+        ax.set_title(spec["title"])
+        ax.axis("equal")
+    elif kind == "gantt":
+        tasks, months = spec["tasks"], spec["months"]
+        fig, ax = plt.subplots(figsize=(8, 0.5 * len(tasks) + 1.6), dpi=150)
+        for row, (name, first, last) in enumerate(tasks):
+            ax.barh(row, last - first + 1, left=first - 0.5, height=0.55, color=_BAR)
+        ax.set_yticks(range(len(tasks)))
+        ax.set_yticklabels([t[0] for t in tasks], fontsize=9.5)
+        ax.invert_yaxis()
+        ax.set_xticks(range(len(months)))
+        ax.set_xticklabels(months, fontsize=9)
+        ax.set_xlim(-0.5, len(months) - 0.5)
+        ax.grid(axis="x", linestyle=":", color="#bbbbbb")
+        ax.set_axisbelow(True)
+        ax.set_title(spec["title"])
+        ax.set_xlabel(spec.get("x_label", ""))
+        ax.spines[["top", "right"]].set_visible(False)
     else:
-        draw_chart(figure["spec"], path)
+        cats, series = spec["categories"], spec["series"]
+        fig, ax = plt.subplots(figsize=(7.5, 4.2), dpi=150)
+        if kind == "multiline":
+            for color, (name, vals) in zip(_SERIES, series.items()):
+                ax.plot(cats, vals, marker="o", linewidth=2, color=color, label=name)
+            ax.grid(axis="y", linestyle=":", color="#bbbbbb")
+        elif kind == "grouped":
+            n = len(series)
+            width = 0.8 / n
+            for i, (color, (name, vals)) in enumerate(zip(_SERIES, series.items())):
+                xs = [c + (i - (n - 1) / 2) * width for c in range(len(cats))]
+                bars = ax.bar(xs, vals, width=width, color=color, label=name)
+                for bar, value in zip(bars, vals):
+                    ax.text(bar.get_x() + bar.get_width() / 2, value + spec["y_max"] * 0.012,
+                            fmt.format(value), ha="center", fontsize=8.5)
+            ax.set_xticks(range(len(cats)))
+            ax.set_xticklabels(cats)
+        else:
+            raise ValueError("nepoznata vrsta grafikona: {}".format(kind))
+        ax.set_ylim(spec.get("y_min", 0), spec["y_max"])
+        ax.set_title(spec["title"])
+        ax.set_xlabel(spec["x_label"])
+        ax.set_ylabel(spec["y_label"])
+        ax.legend(fontsize=8.5, frameon=False)
+        ax.spines[["top", "right"]].set_visible(False)
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def render_figure(figure, path):
+    spec = figure["spec"]
+    if "nodes" in spec:
+        draw_diagram(spec, path)
+    elif "participants" in spec:
+        draw_sequence(spec, path)
+    elif spec.get("kind") in ("multiline", "grouped", "pie", "gantt"):
+        draw_multi_chart(spec, path)
+    else:
+        draw_chart(spec, path)
 
 
 # --- PDF ------------------------------------------------------------------

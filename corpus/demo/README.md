@@ -26,6 +26,26 @@ Opšti dokumenti firme — čine korpus realnijim i služe kao „ometači“ pr
 | `finansijski-izvestaj-h1-2026` | PDF | prihod i rast, prihod po izvoru (tabela), prihod po mesecima i struktura troškova (grafikoni) |
 | `politika-bezbednosti` | PDF | lozinke i 2FA, klasifikacija podataka (tabela), prijava incidenta (dijagram) |
 
+Proširenje (oktobar 2026, `documents_dodatni.py`) — nove vrste slika, ometači i
+još opštih dokumenata:
+
+| Dokument | Format | Sadržaj |
+|---|---|---|
+| `tok-placanja` | PDF | statusi plaćanja (tabela), sekvenca poruka pri plaćanju (dijagram sekvence) |
+| `mrezna-topologija` | PDF | pravila pristupa (tabela), komponente po zonama i podmrežama (dijagram) |
+| `monitoring-i-alarmi` | DOCX | alarmi (tabela), error rate po servisu (linijski, više serija, bez ispisanih vrednosti), broj alarma |
+| `kapacitet-baze-2026` | PDF | serveri baze (tabela), opterećenje CPU-a (grupisani stubići), zauzeće po tabelama (torta) |
+| `roadmap-2027` | PDF | projekti i timovi (tabela), vremenski plan (Gantt, bez datuma) |
+| `booking-arhitektura-2-2` | PDF | **ometač**: zastarela arhitektura 2.2 — drugi portovi, sinhrone notifikacije, latencija iz 2025. |
+| `sla-i-podrska-2025` | PDF | **ometač**: SLA koji je prestao da važi — drugi uptime i cene, uptime Q4 2025. |
+| `procedura-onboardinga` | DOCX | prva nedelja (tabela), priprema pre dolaska (dijagram) |
+| `ugovor-o-obradi-podataka` | PDF | podobrađivači i zemlje obrade (tabela), bez slika |
+| `pravilnik-o-putovanjima` | DOCX | dnevnice (tabela), odobravanje po iznosu (dijagram) |
+| `kodeks-ponasanja` | PDF | samo tekst |
+
+Ometači postoje zato što je pretraga nad prvih 11 dokumenata bila prelaka
+(Hit@5 = 0,98): pretraga sada mora da nađe važeću verziju dokumenta.
+
 Dokumenti su povezani (isti servisi, isti timovi, isti incident), pa postoje
 i pitanja čiji odgovor traži dva dokumenta.
 
@@ -33,7 +53,7 @@ i pitanja čiji odgovor traži dva dokumenta.
 
 ```bash
 python3 -m venv /tmp/corpus-venv
-/tmp/corpus-venv/bin/pip install PyMuPDF==1.24.14 python-docx==1.1.2 matplotlib
+/tmp/corpus-venv/bin/pip install PyMuPDF python-docx matplotlib
 /tmp/corpus-venv/bin/python corpus/demo/generate.py
 ```
 
@@ -48,9 +68,19 @@ dokument (`corpus/test/`) NE ubacivati uz ovaj korpus.
 
 ## Pitanja
 
-`pitanja.json`: 47 pitanja — 20 „samo na slici“ (od toga 4 namerno teška za
-opis rečima: pripadnost namespace-u ili kancelariji, strelica bez natpisa),
-4 kroz dva dokumenta. Na teškim pitanjima (F3, K3, K4, O3) očekuje se razlika između
-varijante A (samo opis slike) i B (opis + slika) — dobri kandidati za prikaz
-ablacije na prezentaciji. Korpus još nije pušten kroz sistem; koja pitanja
-najbolje pokazuju razliku, zna se tek posle prvog prolaza.
+`pitanja.json`: 106 pitanja — 56 „samo na slici“ (od toga 15 namerno teških za
+opis rečima: pripadnost zoni, podmreži, namespace-u ili kancelariji; vrednosti
+sa linijskog grafikona bez ispisanih brojeva; preklapanje i trajanje na Gantt
+planu), 7 kroz dva dokumenta. Pitanja iz proširenja su u `questions_dodatna.py`.
+
+Broj pitanja „samo na slici“ je povećan sa 20 posle prvog merenja: sa 5
+neslaganja između varijanti A i B tačan McNemar-ov test ne može ispod
+p = 0,0625, pa razlika ne bi mogla biti dokazana ni kad postoji.
+
+Oznaka `naziv_i_u_tekstu` označava pitanje čiji je odgovor naziv (servisa,
+projekta) koji postoji i u tekstu, dok sama činjenica (koji od njih) postoji
+samo na slici; za takva pitanja provera curenja se preskače, uz obavezno
+obrazloženje u `napomena`.
+
+Četiri postojeća pitanja (A1, A4, S1, S2) imaju precizniji tekst
+(`izmene_postojecih`), jer bi ih ometači inače učinili dvosmislenim.

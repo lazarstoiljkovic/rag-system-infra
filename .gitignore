@@ -15,9 +15,14 @@ __pycache__/
 # evaluacija — tajne i generisani izlaz
 evaluation/config.json
 evaluation/results/
+evaluation/.venv/
 
 # OS
 .DS_Store
 
 # sadrzi broj AWS naloga u kljucevima lookup-a
 cdk.context.json
+
+# Pisani rad i interni planovi ostaju lokalni — repo je javan
+rad/
+docs/

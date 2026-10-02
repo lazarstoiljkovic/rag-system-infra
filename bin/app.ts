@@ -26,8 +26,10 @@ const network = new NetworkStack(app, 'RagNetworkStack', { env, developerCidr })
 
 const storage = new StorageStack(app, 'RagStorageStack', {
   env,
-  // prebaciti na true pre finalne evaluacije
-  retainData: false,
+  // true od 2026-10-01, pred evaluaciju: `cdk destroy` ne sme da odnese
+  // query-log, jedini izvor odgovora na kojima stoje rezultati rada. Posle
+  // destroy-a bucket i tabele ostaju na nalogu i brisu se rucno.
+  retainData: true,
 });
 
 // Vektorska baza u zasebnom stack-u: indeks je izveden podatak i sme da se

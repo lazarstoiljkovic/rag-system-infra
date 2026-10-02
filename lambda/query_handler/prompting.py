@@ -3,7 +3,8 @@ Prompt za generator, varijante A i B ablacije. Ciste funkcije, bez mreze.
 
   A  (Opcija 2, MRAG taksonomija): generator vidi SAMO tekst. Za chunk slike to
      je njen caption — sirova slika se nikad ne salje.
-  B  (Opcija 3): isto kao A, plus ORIGINALNA slika odmah posle svog captiona,
+  B  (Opcija 3): isto kao A, plus ORIGINALNA slika unutar bloka svog izvora
+     (izmedju zaglavlja i captiona),
      dohvacena preko `image_ref`.
 
 Najvaznije pravilo ovog modula: TEKST PROMPTA JE IDENTICAN U A I B. Varijanta B
@@ -31,6 +32,12 @@ VARIANTS = (VARIANT_A, VARIANT_B)
 # Isti broj kao `--limit-mm-per-prompt` u `ec2-userdata/vllm-bootstrap.sh`.
 MAX_IMAGES = 4
 
+# Primer "npr. [2]" je namerno ZADRZAN. U merenju `eval-2026-10-02` 27 od 38
+# pogresnih navoda bilo je bas [2], ali probni prolaz bez primera
+# (`eval-2026-10-02b`, 2026-10-02) dao je 88 od 212 odgovora bez ijednog navoda,
+# uz istu tacnost odgovora. Primer je ono sto model navodi da citira uopste.
+# Dalje podesavanje prompta na istom skupu pitanja bilo bi prilagodjavanje
+# skupu za evaluaciju, pa se ovde staje.
 SYSTEM_PROMPT = (
     "Ti si asistent za tehnicku dokumentaciju kompanije. Odgovaras na pitanja "
     "iskljucivo na osnovu prilozenih izvora.\n"
@@ -45,14 +52,31 @@ SYSTEM_PROMPT = (
 _TYPE_LABELS = {"text": "tekst", "table": "tabela", "image": "slika, opis"}
 
 
+# Verzija OBLIKA korisnicke poruke (kako se izvori slazu), ulazi u otisak.
+# Bez nje bi izmena oblika poruke ostavila isti otisak, pa bi se dva
+# nauporediva prolaza u `query-log`-u predstavila kao uporediva.
+#   1  delovi poruke bez razdvajanja (do 2026-10-02)
+#   2  svaki deo zavrsava praznim redom — vidi `_PART_END`
+PROMPT_FORMAT = 2
+
+# Sablon za razgovor modela Qwen2.5-VL tekstualne delove poruke spaja BEZ
+# ikakvog razmaka: `...tekst izvora 2.[3] (tabela, ...)`. Model je zato tekst
+# izvora vezivao za broj koji sledi iza njega — u merenju `eval-2026-10-01`
+# 38 od 86 navedenih izvora bilo je pogresno, od toga 31 tacno za jedan veci.
+# Prazan red na kraju svakog dela razdvaja izvore nezavisno od sablona.
+_PART_END = "\n\n"
+
+
 def prompt_fingerprint() -> str:
     """
-    Kratak otisak sistemskog prompta, za `query-log`.
+    Kratak otisak prompta, za `query-log`: sistemski prompt i verzija oblika
+    korisnicke poruke.
 
     Dva evaluaciona prolaza su uporediva samo ako su isla sa istim promptom.
     Otisak to cini proverljivim bez cuvanja celog prompta u svakom zapisu.
     """
-    return hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+    source = "{}\nformat={}".format(SYSTEM_PROMPT, PROMPT_FORMAT)
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()[:12]
 
 
 def context_header(context: Dict[str, Any]) -> str:
@@ -105,16 +129,21 @@ def build_messages(
 
     allowed = set(images_to_attach(contexts, variant))
     attached: List[str] = []
-    content: List[Dict[str, Any]] = [{"type": "text", "text": "Izvori:"}]
+    content: List[Dict[str, Any]] = [{"type": "text", "text": "Izvori:" + _PART_END}]
 
     for context in contexts:
+        # Zaglavlje i tekst su zasebni delovi, a slika (samo u B) ide IZMEDJU
+        # njih: tako je unutar bloka svog izvora, a ne zalepljena za
+        # zaglavlje sledeceg. Tekstualni delovi su isti u A i B.
         text = (context.get("text") or "").strip()
-        content.append({"type": "text", "text": "{}\n{}".format(context_header(context), text)})
+        content.append({"type": "text", "text": context_header(context) + "\n"})
 
         ref = context.get("image_ref")
         if ref in allowed and ref in image_urls and ref not in attached:
             content.append({"type": "image_url", "image_url": {"url": image_urls[ref]}})
             attached.append(ref)
+
+        content.append({"type": "text", "text": text + _PART_END})
 
     content.append({"type": "text", "text": "Pitanje: {}".format(question.strip())})
 

@@ -176,7 +176,7 @@ Bootstrap za `eu-central-1` je uradjen.
 | 3 | `search-stack` — OpenSearch domen + hibridna sema | **provereno pa sruseno radi ustede** |
 | 4 | `ingestion-stack` | **deploy-ovano i provereno end-to-end (2026-09-26)** |
 | 5 | `query-stack` | **deploy-ovano i provereno end-to-end (2026-09-26)** |
-| 6 | korpus, RAGAS, UI | **demo korpus Nexa Tech (11 dok., 47 pitanja) indeksiran i izmeren; UI deploy-ovan i isproban; RAGAS nije poceo** |
+| 6 | korpus, RAGAS, UI | **demo korpus Nexa Tech (11 dok., 47 pitanja) indeksiran i izmeren; UI deploy-ovan i isproban; RAGAS kod napisan (`evaluation/`), nije pusten** |
 
 Trajno na nalogu stoje faze 1 i 2 — VPC, subnet-i, IGW, dva SG-a, dva gateway
 endpointa, prazan S3 bucket, dve prazne DynamoDB tabele, i `RagModelServingStack`
@@ -414,6 +414,84 @@ pitanja "samo na slici" (vs. stari korpus sa test PDF-om: vise promasaja).
   dokumenta — model izmislja uzrok ili odustaje), H1 (racun: 30 umesto 24,
   uzeo "najvise 30"), O4 (obrnut odnos CEO/Head of People).
 
+### Greska u promptu: pogresno navodjenje izvora (nadjeno 2026-10-02) — ISPRAVLJENO I DEPLOY-OVANO
+
+Pregledom `mm_faithfulness` (0 uz tacan odgovor) iz `eval-2026-10-01`: od 86
+navedenih izvora 38 pogresno (A i B podjednako), od toga 31 tacno +1. Uzrok:
+chat template Qwen2.5-VL spaja tekstualne delove poruke BEZ razmaka, pa je kraj
+teksta izvora n bio zalepljen za `[n+1] (zaglavlje)` — potvrdjeno renderovanjem
+pravog `chat_template.json`. Ispravka u `prompting.py`: svaki deo zavrsava sa
+`\n\n`; u B slika ide IZMEDJU zaglavlja i captiona (unutar bloka izvora);
+`PROMPT_FORMAT = 2` ulazi u `prompt_fingerprint` (stari zapisi imaju drugi
+otisak). U `ragas_eval.py` slike idu NA KRAJ konteksta (RAGAS sam numerise
+"Context n", slika izmedju bi pomerila numeraciju). Testovi: 157. Rad: 5.6.2 i
+nova 5.8.4. **Trazi deploy `RagQueryStack` pre sledeceg merenja.** Rezultati
+`eval-2026-10-01` su sa starim promptom (A/B i dalje fer, isti prompt u obe);
+`answer_accuracy` i `faithfulness` ne zavise od brojeva izvora, `mm_faithfulness`
+zavisi.
+
+### Drugo merenje (2026-10-02) — prosireni korpus, ispravljen prompt
+
+GPU: rezervni `g5.2xlarge` (1b) dobijen za 32 s — PRVI put; pinovan bootstrap
+prosao i na njemu, `ready` za 10.5 min. 22 dokumenta, 109/109 delova za ~80 s.
+Tri prolaza (svi u query-log-u i lokalno u `evaluation/results/`):
+
+| Prolaz | prompt (otisak) | pogresni navodi | bez navoda |
+|---|---|---|---|
+| eval-2026-10-01 (stari korpus) | stari format (d474d66c226b) | 44% | 1/94 |
+| **eval-2026-10-02 (GLAVNO)** | razdvojeni izvori + "npr. [2]" (986c82675573) | 21% | 4/212 |
+| eval-2026-10-02b (provera) | bez primera (a50a1008f6ed) | 15% | 88/212 |
+
+Ostatak gresaka u 02: 27 od 38 pogresnih navoda je [2], pravi izvor [1] -> model
+prepisuje primer. Bez primera manje gresaka, ali 42% odgovora bez navoda; TACNOST
+ista (odgovor sadrzi dokaz: A 64/65, B 70/69). Odluka: glavno = 02, 02b =
+provera robusnosti, prompt vracen na 02 (otisak proveren) i deploy-ovan; prompt
+se dalje NE podesava na istom skupu pitanja (prilagodjavanje skupu za evaluaciju).
+Uz oba: `-sparse` prolazi (106, samo A). GPU i RagSearchStack OSTAVLJENI UPALJENI
+(Lazar hoce rucnu proveru) — gasiti samo uz njegovu potvrdu.
+
+### Prosirenje korpusa (2026-10-01, posle prvog merenja) — indeksirano 2026-10-02
+
+22 dokumenta (bilo 11), 109 delova (60 tekst / 21 tabela / 28 slika), 106
+pitanja (bilo 47): 56 "samo na slici" (bilo 20), 15 teskih (bilo 4), 7 kroz
+dva dokumenta. Novo u `corpus/demo/documents_dodatni.py` i
+`questions_dodatna.py`; crtac (`render.py`) dobio dijagram sekvence,
+multiline (bez ispisanih vrednosti), grupisane stubice, tortu i Gantt.
+Ometaci: `booking-arhitektura-2-2`, `sla-i-podrska-2025` -> pitanja A1, A4,
+S1, S2 dobila precizniji tekst (`izmene_postojecih`). Nova oznaka
+`naziv_i_u_tekstu` (odgovor je naziv iz teksta, a cinjenica samo na slici;
+preskace proveru curenja, trazi `napomena`). Provera curenja je uhvatila dva
+slucaja (zaglavlje "Pravna sluzba" u novom dokumentu = odgovor B3; "2.4" =
+broj verzije) — ispravljeno. Sve nove slike vizuelno proverene (dve
+ispravljene: strelica kroz kutiju). Stari dokumenti su regenerisani (isti
+sadrzaj, drugaciji bajtovi). Za merenje: svih 22 u `raw/`, pa novi `RUN`.
+
+### Evaluacija — prvi pun prolaz (2026-10-01, `eval-2026-10-01`)
+
+Sesija: deploy `RagStorageStack` (`retainData: true`; auto-delete handler
+proverava tag `aws-cdk:auto-delete-objects`, pa nije praznio bucket —
+provereno) i `RagModelServingStack` (bge-m3 lock). GPU: 5 min
+`InsufficientInstanceCapacity` (1a, 1c; rezervni `g5.2xlarge` se u porukama
+nije pojavio), pa `g5.xlarge` u 1b; `ready` za 12.5 min; ukupno upaljen 22 min.
+`RagSearchStack` deploy 18 min, destroy 15.5 min. Svih 11 dokumenata
+istovremeno za ~25 s, 60/60 delova — **lock radi** (ranije SIGSEGV).
+94/94 odgovora (~0.9 s prosek); plus `eval-2026-10-01-sparse` (47, samo A).
+Rezultati su LOKALNO u `evaluation/results/` (nije na git-u) i u query-log-u.
+
+| Sudija Claude (AnswerAccuracy >= 0.75) | A | B | samo A | samo B | p tacan |
+|---|---|---|---|---|---|
+| sva (47) | 33 | 38 | 0 | 5 | 0.0625 |
+| samo na slici (20) | 10 | 15 | 0 | 5 | 0.0625 |
+| tekst/tabela/vise (27) | 23 | 23 | 0 | 0 | 1 |
+
+B pobedjuje na A3, A4, H4, N3, S3 (A4/N3/H4 isto kao rucna ocena 26.9).
+**Sa 5 neslaganja tacan test ne moze ispod 0.0625 ni kad su sva u korist B**
+-> skup pitanja "samo na slici" je premali; dopuna je prioritet.
+Pretraga: Hit@5 0.98, MRR 0.85 (samo na slici 0.68); sa sparse MRR 0.88/0.71.
+Otvoreno: `mm_faithfulness` nize od `faithfulness` i na tekstu (0.78 vs 0.95;
+binarna je strozija) — pregledati obrazlozenja sudije (npr. X4 A: 1 vs 0)
+pre upotrebe u radu. `manual.csv` prazan — ko ga popunjava, nije odluceno.
+
 ### Faze 4+5 — integracioni prolaz sa demo korpusom (2026-09-26, uvece)
 
 GPU `g5.xlarge` u `1b` odmah; `ready` za ~12 min; ukupno upaljen 26 min.
@@ -561,11 +639,12 @@ Faza 4 je zavrsena. Pred fazu 5 su bile tri odluke:
 1. ~~`sparse_weights`~~ — **odluceno** (vidi "Serving sloj"): sekundarni
    eksperiment, osnovna pretraga dense+BM25. `QueryHandler` treba parametar
    koji bira izmedju dva oblika upita.
-2. **Sudija za RAGAS — JOS OTVORENO**, razmatra se kasnije. Qwen sam sebe
-   (slab, pristrasan) ili spoljni API model (pouzdaniji, ali podaci izlaze iz
-   privatno hostovanog sistema; korpus je sinteticki, pa je to prihvatljivo
-   uz obrazlozenje u radu). Ne blokira fazu 5 — `query-log` treba da cuva sve
-   sto bilo koji sudija trazi (pitanje, retrieved konteksti, odgovor).
+2. **Sudija za RAGAS — ODLUCENO 2026-10-01: SAMO Claude** (Sonnet 5, preko
+   Anthropic-ovog OpenAI-kompatibilnog API-ja; Lazar odbio drugog sudiju).
+   Qwen nije sudija: ocenjivao bi sopstvene odgovore (odeljak 2.5.3 rada).
+   Obrazlozenje za rad: privatnost se odnosi na SISTEM (put pitanje ->
+   odgovor ostaje privatan); sudija je merni instrument van sistema, a korpus
+   je sinteticki. Rucna ocena je zlatni standard; sudija se poredi sa njom (kapa).
 3. ~~Captioning prompt~~ — **prepisan u kodu (2026-09-26), NEPROVEREN na GPU-u.**
    Uputstva odvojena od oblika odgovora (sablon sa poljima `Komponente:`,
    `Veze:`, `Vrednosti:`...), izricito "bez ponavljanja ovih uputstava", i za
@@ -584,7 +663,20 @@ Faze 4 i 5 su provereni end-to-end. Sledece, redom:
    ili naslov dokumenta ispred teksta chunka pri embedding-u (kontekst
    chunka). Meriti, ne pogadjati — `pitanja.json` je vec merni skup.
 4. **Dopuniti pitanja** onima na kojima se ocekuje prednost B (vidi nalaze).
-5. **Sudija za RAGAS** (otvoreno) i evaluaciona skripta nad `query-log`-om.
+5. **Evaluacija — kod NAPISAN (2026-10-01), NIJE pusten.** `evaluation/`
+   (vidi `evaluation/README.md`): `run_queries.py` -> `fetch_log.py` ->
+   `ragas_eval.py` -> `report.py`. RAGAS 0.4.3. Metrike:
+   Hit@k/MRR, `faithfulness` (tekst) + `mm_faithfulness` (sudija vidi i slike
+   — inace bi B bio kaznjen za tvrdnje sa slike), `answer_accuracy`,
+   `context_recall`; McNemar tacan oblik. **Sudija proveren probnim pozivom
+   (2026-10-01)** na 3 izmisljena primera: tacan iz teksta -> sve 1; odgovor
+   SA SLIKE -> faithfulness 0 ali mm_faithfulness 1 (potvrda zasto dve
+   vernosti); izmisljen -> 0. Kvake Anthropic OpenAI-compat sloja: odbija
+   `json_object` i `json_schema` bez `strict` -> instructor `Mode.MD_JSON`;
+   Sonnet 5 odbija `temperature` -> ne salje se (ponovljivost daje kes sudije).
+   Kljuc je u `evaluation/config.json` (u .gitignore-u). Pre pustanja jos:
+   (a) deploy bge-m3 lock-a (`RagModelServingStack`, uz potvrdu),
+   (b) `retainData: true` u `bin/app.ts`, (c) ko popunjava `manual.csv`.
 6. ~~UI~~ — deploy-ovan i isproban na zivom API-ju (2026-09-26).
 
 Obrazac za svaki prolaz sa GPU-om: **ASG prvi, search stack tek kad se
