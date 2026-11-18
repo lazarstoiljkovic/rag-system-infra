@@ -83,6 +83,12 @@ Rad sa sistemom:
 aws autoscaling set-desired-capacity --auto-scaling-group-name <asg> --desired-capacity 1
 #   instanca je spremna kad dobije tag vllm-status=ready (~11-13 min od nule)
 
+# rucni pristup GPU-u (dijagnostika): samo preko SSM-a, nijedan port nije otvoren ka internetu
+aws ssm start-session --target <instance-id>                      # ljuska
+aws ssm start-session --target <instance-id> \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["8000"],"localPortNumber":["8000"]}' # tunel: localhost:8000 -> vLLM
+
 # dokumenti: postavljanje u raw/ automatski pokrece obradu
 aws s3 cp corpus/demo/dokumenti/ s3://<bucket>/raw/ --recursive
 

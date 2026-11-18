@@ -32,8 +32,8 @@ export interface IngestionStackProps extends cdk.StackProps {
  * indeksiranje).
  *
  * NEMA cross-stack reference ka `search-stack`-u. Endpoint domena se cita iz
- * SSM-a u vreme izvrsavanja, da `cdk destroy RagSearchStack` ostane moguc dok
- * ovaj stack postoji.
+ * SSM-a u vreme izvrsavanja, pa domen sme da se srusi i ponovo podigne (sa
+ * novim endpoint-om) bez ponovnog deploy-a ovog stack-a.
  */
 export class IngestionStack extends cdk.Stack {
   public readonly stateMachine: sfn.StateMachine;

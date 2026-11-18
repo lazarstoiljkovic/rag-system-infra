@@ -161,8 +161,12 @@ aws sts get-caller-identity   # proveriti da je vracen nalog onaj privatni
 `github.com/lazarstoiljkovic/rag-system-infra` (public).
 
 Zato u repou nema broja AWS naloga: `cdk.context.json` je u `.gitignore` jer mu
-je broj naloga deo kljuca lookup-a. Prava IP adresa se prosledjuje preko
-`-c developerCidr=...`, nikad se ne upisuje u `cdk.json`.
+je broj naloga deo kljuca lookup-a.
+
+Rucni pristup GPU instanci ide samo kroz SSM Session Manager (ljuska ili
+tunel `AWS-StartPortForwardingSession`). Portovi 8000/8001 su otvoreni
+iskljucivo za `lambdaSg`; pravilo za IP developera (`developerCidr`) je
+uklonjeno 2026-11-18, jer tunel radi isto bez otvaranja porta ka internetu.
 
 ## Stanje
 
@@ -317,9 +321,12 @@ sukoba.
 
 - **Nema cross-stack reference ka `search-stack`-u.** Endpoint domena ide kroz
   SSM (`/rag/opensearch/endpoint`), a `IndexChunks` ga cita u vreme izvrsavanja.
-  Cross-stack export bi napravio zavisnost koju CloudFormation postuje pri
-  brisanju, pa `cdk destroy RagSearchStack` vise ne bi prolazio — cime bi propao
-  razlog zbog kog je domen izdvojen.
+  Domen se rusi tokom pauza, a svako novo podizanje daje novi endpoint; sa
+  referencom bi posle svakog podizanja morali ponovo da se deploy-uju ingestion
+  i query, a `cdk deploy` bilo kog od njih bez `-e` povlacio bi i domen.
+  Brisanje CloudFormation NE bi blokirao: `cdk.json` ima
+  `defaultCrossStackReferences: weak`, pa nema Export/ImportValue nego
+  `Fn::GetStackOutput` (ispravljeno 2026-11-18; ranije je ovde pisalo suprotno).
 - **`DistributedMap`, ne obicni `Map`.** Lista chunkova se cita iz S3 preko
   `ItemReader`-a. Obicni Map bi je nosio kroz stanje i probio tvrd limit Step
   Functions-a od **256KB** na prvom ozbiljnijem dokumentu.

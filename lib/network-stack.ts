@@ -2,14 +2,6 @@ import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { Construct } from 'constructs';
 
-export interface NetworkStackProps extends cdk.StackProps {
-  /**
-   * CIDR sa koga je dozvoljen pristup portovima modela (8000/8001).
-   * Tokom razvoja: javna IP adresa developera. Nikada 0.0.0.0/0.
-   */
-  readonly developerCidr: string;
-}
-
 /**
  * Mrezni sloj — lean verzija.
  *
@@ -26,7 +18,7 @@ export class NetworkStack extends cdk.Stack {
   /** SG Lambda funkcija koje pozivaju inference sloj preko mreze. */
   public readonly lambdaSg: ec2.SecurityGroup;
 
-  constructor(scope: Construct, id: string, props: NetworkStackProps) {
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
     this.vpc = new ec2.Vpc(this, 'RagVpc', {
@@ -67,18 +59,14 @@ export class NetworkStack extends cdk.Stack {
       allowAllOutbound: true,
     });
 
-    // SG-to-SG: samo Lambde iz ovog VPC-a smeju na portove modela.
+    // SG-to-SG: samo Lambde iz ovog VPC-a smeju na portove modela. Rucni
+    // pristup ide kroz SSM Session Manager (ljuska ili port forwarding), pa
+    // nijedan port nije otvoren ka internetu.
     for (const port of [8000, 8001]) {
       this.inferenceSg.addIngressRule(
         this.lambdaSg,
         ec2.Port.tcp(port),
         `Lambda ka model serving (${port})`,
-      );
-      // Razvoj: rucni curl sa developerove masine.
-      this.inferenceSg.addIngressRule(
-        ec2.Peer.ipv4(props.developerCidr),
-        ec2.Port.tcp(port),
-        `Developer ka model serving (${port})`,
       );
     }
 

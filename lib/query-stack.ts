@@ -37,7 +37,8 @@ export interface QueryStackProps extends cdk.StackProps {
  *
  * Kao i ingestion, NEMA cross-stack reference ka `search-stack`-u: endpoint i
  * ime indeksa se citaju iz SSM-a u vreme izvrsavanja, a imena pipeline-a su
- * obicne konstante. `cdk destroy RagSearchStack` ostaje moguc.
+ * obicne konstante. Domen sme da se srusi i ponovo podigne bez deploy-a ovog
+ * stack-a.
  */
 export class QueryStack extends cdk.Stack {
   public readonly api: apigateway.RestApi;

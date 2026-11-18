@@ -175,12 +175,19 @@ export class SearchStack extends cdk.Stack {
     // taj resource, jer je on dete Domain konstrukta.
     indexInitResource.node.addDependency(this.domain);
 
-    // Endpoint ide kroz SSM, a NE kroz cross-stack export.
+    // Endpoint ide kroz SSM, a NE kao cross-stack referenca (props).
     //
-    // Export bi napravio zavisnost koju CloudFormation postuje pri brisanju:
-    // `cdk destroy RagSearchStack` bi bio odbijen dok god `ingestion-stack`
-    // postoji. Time bi propao ceo razlog zbog kog je domen u zasebnom stack-u —
-    // da se sme srusiti tokom pauza, jer je indeks izveden podatak.
+    // Referenca bi endpoint upisala u env promenljive Lambdi u trenutku
+    // deploy-a. Domen se rusi tokom pauza, a svako novo podizanje daje NOVI
+    // endpoint (ime domena generise CloudFormation), pa bi posle svakog
+    // podizanja morali ponovo da se deploy-uju i ingestion i query. Uz to bi
+    // CDK zabelezio zavisnost, pa bi `cdk deploy RagQueryStack` bez `-e`
+    // povlacio i skupi domen.
+    //
+    // CloudFormation brisanje ovde NE bi blokirao: `cdk.json` ima
+    // `@aws-cdk/core:defaultCrossStackReferences: weak`, pa CDK umesto
+    // Export/ImportValue pravi `Fn::GetStackOutput`, koji ne zakljucava izvorni
+    // stack. Uz podrazumevane (strong) reference bio bi i to razlog.
     //
     // Lambde citaju ovaj parametar u vreme IZVRSAVANJA, pa izmedju stack-ova
     // nema nikakve veze ni u deploy-u ni u brisanju.
