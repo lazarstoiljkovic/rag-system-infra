@@ -24,12 +24,21 @@ RESULTS_DIR = os.path.join(HERE, "results")
 
 VARIANTS = ("A", "B")
 
+# Isti spisak kao `retrieval.MODES` u QueryHandler-u (zakljucano testom).
+RETRIEVAL_MODES = ("dense_bm25", "dense_bm25_sparse", "dense_bm25_rrf", "dense_bm25_lex",
+                   "dense_bm25_deep", "bm25", "dense", "sparse")
+
 # Grupe po kojima se izvestaj deli. Jedno pitanje pripada vise grupa.
 ALL = "sva"
 IMAGE_ONLY = "samo_na_slici"
 HARD = "tesko_za_opis"
 TEXT = "tekst_tabela_vise"
 GROUPS = (ALL, IMAGE_ONLY, HARD, TEXT)
+
+# Tip pitanja po izvoru odgovora (polje `tip` u pitanja.json). Za poredjenje
+# oblika pretrage, gde je pitanje "da li BM25 bolje nalazi tabele, a gusti
+# vektor slike" — grupe iznad to ne razdvajaju.
+QUESTION_TYPES = ("tekst", "tabela", "vise-dokumenata", "dijagram", "grafikon")
 
 
 def load_questions(path: str = QUESTIONS_PATH) -> List[Dict[str, Any]]:
@@ -126,6 +135,7 @@ def join_records(
             "documents": list(question["dokumenti"]),
             "imageOnly": bool(question.get("samo_na_slici")),
             "groups": groups_of(question),
+            "type": question.get("tip"),
             "contexts": (item or {}).get("contexts", []),
             "attachedImages": (item or {}).get("attachedImages", []),
             "answer": (item or {}).get("answer", ""),

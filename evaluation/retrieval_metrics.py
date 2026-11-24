@@ -28,6 +28,12 @@ def first_relevant_rank(record: Dict[str, Any]) -> Optional[int]:
     return None
 
 
+def hit_at_k(record: Dict[str, Any], k: int) -> bool:
+    """Pogodak po pitanju; uparen ishod za McNemar-ov test izmedju dva oblika pretrage."""
+    rank = first_relevant_rank(record)
+    return rank is not None and rank <= k
+
+
 def document_recall(record: Dict[str, Any]) -> float:
     """Udeo dokumenata sa odgovorom koji imaju bar jedan deo medju pronadjenim."""
     found = {c.get("documentId") for c in record["contexts"]}

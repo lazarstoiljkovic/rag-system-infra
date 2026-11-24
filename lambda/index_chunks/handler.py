@@ -34,10 +34,11 @@ DATA_BUCKET = os.environ["DATA_BUCKET"]
 REGION = os.environ["AWS_REGION"]
 
 # Endpoint i ime indeksa se citaju iz SSM-a u vreme IZVRSAVANJA, ne iz env
-# promenljive popunjene cross-stack export-om. Export bi napravio zavisnost
-# koju CloudFormation postuje pri brisanju, pa `cdk destroy RagSearchStack`
-# vise ne bi prolazio dok postoji ovaj stack — a rusenje domena tokom pauza je
-# razlog zbog kog je on uopste izdvojen.
+# promenljive popunjene cross-stack referencom. Domen se rusi tokom pauza, a
+# svako podizanje daje NOVI endpoint: env promenljiva bi zastarela posle svakog
+# rusenja, a `cdk deploy` ovog stack-a bez `-e` povlacio bi i domen. Brisanje
+# domena referenca ne bi blokirala (`cdk.json` ima weak reference, bez
+# Export/ImportValue).
 ENDPOINT_PARAM = os.environ.get("OPENSEARCH_ENDPOINT_PARAM", "/rag/opensearch/endpoint")
 INDEX_NAME_PARAM = os.environ.get("INDEX_NAME_PARAM", "/rag/opensearch/index-name")
 

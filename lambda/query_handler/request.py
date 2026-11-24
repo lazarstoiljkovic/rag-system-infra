@@ -51,11 +51,15 @@ def _body(event: Dict[str, Any]) -> Dict[str, Any]:
 
 def parse_request(event: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Vraca `{question, variant, retrieval, k, evalRunId}` ili dize BadRequest.
+    Vraca `{question, variant, retrieval, k, evalRunId, retrievalOnly}` ili
+    dize BadRequest.
 
     Podrazumevano: varijanta A, osnovna pretraga (dense_bm25), k = 5. Varijanta
     i oblik pretrage se ipak uvek upisuju u `query-log`, pa se iz zapisa uvek
     zna sta je bilo, cak i kad klijent to nije poslao.
+
+    `retrievalOnly: true` zaustavlja obradu posle pretrage: bez slika i bez
+    generisanja. Za poredjenje oblika pretrage, gde odgovor nije potreban.
     """
     body = _body(event)
 
@@ -85,12 +89,17 @@ def parse_request(event: Dict[str, Any]) -> Dict[str, Any]:
             raise BadRequest("'evalRunId' sme imati samo slova, cifre, '.', '_' i '-' "
                              "(do 128 znakova)")
 
+    retrieval_only = body.get("retrievalOnly", False)
+    if not isinstance(retrieval_only, bool):
+        raise BadRequest("'retrievalOnly' mora biti true ili false")
+
     return {
         "question": question,
         "variant": variant,
         "retrieval": retrieval,
         "k": k,
         "evalRunId": eval_run_id,
+        "retrievalOnly": retrieval_only,
     }
 
 

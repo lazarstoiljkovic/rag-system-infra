@@ -10,50 +10,22 @@ import { Construct } from 'constructs';
 
 export interface SearchStackProps extends cdk.StackProps {
   readonly vpc: ec2.IVpc;
-  /** SG Lambda funkcija — jedini izvor sa koga domen prima saobracaj. */
   readonly lambdaSg: ec2.ISecurityGroup;
 }
-
-/**
- * Vektorska baza — OpenSearch domen sa hibridnom semom.
- *
- * Zaseban stack, a ne deo storage-stack-a, jer je indeks IZVEDEN podatak:
- * svaki chunk, vektor i caption se regenerise pokretanjem ingestiona nad
- * `raw/` prefiksom. S3 i DynamoDB drze ono sto se ne moze regenerisati —
- * originalne dokumente i `query-log` na kome stoji RAGAS evaluacija. Da su u
- * istom stack-u, jedna `cdk destroy` komanda brisala bi i jedno i drugo.
- * Granularnost stack-ova time prati zivotni ciklus podataka, ne taksonomiju
- * AWS servisa.
- *
- * Domen je VPC-attached, ne javni. Razlog je mrezni: Lambde su u VPC-u bez
- * NAT-a (zbog SG-to-SG pristupa ka vLLM-u), pa javni endpoint ne bi ni mogle
- * da dosegnu bez placenog interface endpoint-a.
- *
- * Posledica koju treba znati: domen nije dostupan sa developerove masine.
- * Zato semu indeksa postavlja custom resource iz ovog stack-a, a ne rucna
- * skripta. Za ad-hoc inspekciju indeksa trebace bastion sa SSM port
- * forwarding-om (zasad nije potreban).
- */
 export class SearchStack extends cdk.Stack {
   public readonly domain: opensearch.Domain;
   public readonly domainSg: ec2.SecurityGroup;
 
-  /** Ime indeksa — dele ga IndexChunks i QueryHandler u fazama 4 i 5. */
   public static readonly INDEX_NAME = 'rag-chunks';
-  /** Dimenzija gustog vektora: bge-m3 daje 1024. Izmereno, ne pretpostavljeno. */
   public static readonly VECTOR_DIM = 1024;
 
-  /**
-   * Search pipeline-i za hibridnu pretragu, po obliku upita. Pravi ih IndexInit
-   * (`lambda/index_init/pipelines.py`), a QueryHandler ih bira po zahtevu.
-   * Obicne konstante, ne cross-stack reference — isti razlog kao za SSM ispod.
-   */
   public static readonly PIPELINES = {
     dense_bm25: 'rag-hybrid-dense-bm25',
     dense_bm25_sparse: 'rag-hybrid-dense-bm25-sparse',
+    dense_bm25_rrf: 'rag-hybrid-dense-bm25-rrf',
+    dense_bm25_lex: 'rag-hybrid-dense-bm25-lex',
   };
 
-  /** SSM putanje preko kojih Lambde nalaze domen, bez cross-stack zavisnosti. */
   public static readonly ENDPOINT_PARAM = '/rag/opensearch/endpoint';
   public static readonly INDEX_NAME_PARAM = '/rag/opensearch/index-name';
 
@@ -71,20 +43,6 @@ export class SearchStack extends cdk.Stack {
       'Lambda ka OpenSearch (HTTPS)',
     );
 
-    // Interface endpointi za EC2 i SSM API.
-    //
-    // Lambde su u VPC-u bez NAT-a i vide samo gateway endpointe (S3, DynamoDB).
-    // A dva poziva idu ka javnim AWS API-jima: `ec2:DescribeInstances`
-    // (pronalazenje GPU instance po tagu) i `ssm:GetParameter` (endpoint ovog
-    // domena). Bez endpointa oba vise do timeout-a, bez jasne greske.
-    //
-    // Zasto bas ovde, a ne u network-stack-u: interface endpoint se placa po
-    // satu (~0.012 USD/h po zoni), za razliku od gateway varijante. Trebaju
-    // samo dok ingestion ili query tok radi, a tada ionako mora stajati i
-    // domen. Ovako se rusi zajedno sa njim i ne kosta nista tokom pauza.
-    //
-    // Jedna zona je dovoljna: privatni DNS razresava ime servisa na ENI u
-    // eu-central-1a, a Lambde iz ostalih zona ga dosezu unutar VPC-a.
     for (const [id, service] of [
       ['Ec2ApiEndpoint', ec2.InterfaceVpcEndpointAwsService.EC2],
       ['SsmApiEndpoint', ec2.InterfaceVpcEndpointAwsService.SSM],
@@ -165,7 +123,9 @@ export class SearchStack extends cdk.Stack {
     const indexInitResource = new cdk.CustomResource(this, 'IndexInit', {
       serviceToken: indexInit.functionArn,
       // 2: dodati search pipeline-i za hibridnu pretragu (faza 5).
-      properties: { schemaVersion: '2' },
+      // 3: eksperimentalni pipeline-i RRF i lex, za poredjenje oblika pretrage.
+      //    Menja samo pipeline-e; mapping postojeceg indeksa se ne dira.
+      properties: { schemaVersion: '3' },
     });
 
     // Bez ove linije CloudFormation sme da pokrene IndexInit pre nego sto se

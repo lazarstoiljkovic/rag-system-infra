@@ -10,13 +10,24 @@ sys.path.insert(0, os.path.join(_LAMBDA, "index_init"))
 
 import pipelines  # noqa: E402
 from retrieval import (  # noqa: E402
+    BM25,
+    DEEP_CANDIDATES,
+    DENSE,
     DENSE_BM25,
+    DENSE_BM25_DEEP,
+    DENSE_BM25_LEX,
+    DENSE_BM25_RRF,
     DENSE_BM25_SPARSE,
+    HYBRID_MODES,
     MAX_SPARSE_TERMS,
     MODES,
+    SINGLE_MODES,
+    SPARSE,
     build_search_body,
     parse_hits,
+    pipeline_key,
     sparse_subquery,
+    uses_pipeline,
 )
 
 VEC = [0.1] * 1024
@@ -50,6 +61,71 @@ class BuildSearchBodyTest(unittest.TestCase):
             build_search_body("q", VEC, 5, "samo_bm25")
         with self.assertRaises(ValueError):
             build_search_body("q", VEC, 0)
+        with self.assertRaises(ValueError):
+            build_search_body("q", VEC, 0, BM25)
+
+
+class SingleBranchTest(unittest.TestCase):
+    """Pojedinacne grane: osnova za poredjenje sa hibridom."""
+
+    WEIGHTS = {"7419": 0.3, "12": 0.1}
+
+    def test_grana_je_tacno_podupit_hibrida(self):
+        # Poredjenje ima smisla samo ako grana sama radi ISTO sto radi u hibridu.
+        hybrid = build_search_body("q", VEC, 5, DENSE_BM25_SPARSE, self.WEIGHTS)
+        subqueries = hybrid["query"]["hybrid"]["queries"]
+        for mode, expected in zip((BM25, DENSE, SPARSE), subqueries):
+            body = build_search_body("q", VEC, 5, mode, self.WEIGHTS)
+            self.assertEqual(body["query"], expected, mode)
+
+    def test_bez_hybrid_omotaca_i_bez_pipeline_a(self):
+        for mode in SINGLE_MODES:
+            body = build_search_body("q", VEC, 5, mode, self.WEIGHTS)
+            self.assertNotIn("hybrid", body["query"], mode)
+            self.assertFalse(uses_pipeline(mode), mode)
+        for mode in HYBRID_MODES:
+            self.assertTrue(uses_pipeline(mode), mode)
+
+    def test_size_i_izuzeta_polja_kao_kod_hibrida(self):
+        for mode in SINGLE_MODES:
+            body = build_search_body("q", VEC, 7, mode, self.WEIGHTS)
+            self.assertEqual(body["size"], 7)
+            self.assertIn("dense_vector", body["_source"]["excludes"])
+
+    def test_retka_grana_bez_tokena_ne_vraca_nista(self):
+        body = build_search_body("q", VEC, 5, SPARSE, {})
+        self.assertEqual(body["query"], {"match_none": {}})
+
+    def test_svi_oblici(self):
+        self.assertEqual(set(MODES), set(HYBRID_MODES) | set(SINGLE_MODES))
+        self.assertEqual(len(MODES), 8)
+
+
+class MergeVariantsTest(unittest.TestCase):
+    """RRF, lex i deep menjaju samo spajanje ili broj kandidata, ne podupite."""
+
+    def test_rrf_i_lex_salju_isti_upit_kao_osnova_kroz_drugi_pipeline(self):
+        base = build_search_body("q", VEC, 5, DENSE_BM25)
+        for mode in (DENSE_BM25_RRF, DENSE_BM25_LEX):
+            self.assertEqual(build_search_body("q", VEC, 5, mode), base, mode)
+            self.assertEqual(pipeline_key(mode), mode)
+            self.assertNotEqual(pipeline_key(mode), pipeline_key(DENSE_BM25))
+
+    def test_deep_ima_vise_kandidata_a_isti_pipeline(self):
+        body = build_search_body("q", VEC, 5, DENSE_BM25_DEEP)
+        hybrid = body["query"]["hybrid"]
+        self.assertEqual(hybrid["pagination_depth"], DEEP_CANDIDATES)
+        self.assertEqual(hybrid["queries"][1]["knn"]["dense_vector"]["k"], DEEP_CANDIDATES)
+        self.assertEqual(hybrid["queries"][0], build_search_body("q", VEC, 5)["query"]["hybrid"]["queries"][0])
+        self.assertEqual(body["size"], 5)                  # vraca se i dalje top 5
+        self.assertEqual(pipeline_key(DENSE_BM25_DEEP), DENSE_BM25)
+
+    def test_osnova_nema_pagination_depth(self):
+        self.assertNotIn("pagination_depth", build_search_body("q", VEC, 5)["query"]["hybrid"])
+
+    def test_pojedinacne_grane_nemaju_pipeline(self):
+        for mode in SINGLE_MODES:
+            self.assertIsNone(pipeline_key(mode))
 
 
 class SparseSubqueryTest(unittest.TestCase):
@@ -101,13 +177,19 @@ class PipelineSlaganjeTest(unittest.TestCase):
     """Tezine u pipeline-u moraju tacno odgovarati podupitima u upitu."""
 
     def test_isti_oblici_pretrage_sa_obe_strane(self):
-        self.assertEqual(set(MODES), set(pipelines.PIPELINE_NAMES))
+        self.assertEqual({pipeline_key(m) for m in HYBRID_MODES}, set(pipelines.PIPELINE_NAMES))
+        for mode in HYBRID_MODES:
+            self.assertEqual(pipelines.SUBQUERY_COUNT[pipeline_key(mode)],
+                             len(build_search_body("q", VEC, 5, mode, {"1": 0.5})
+                                 ["query"]["hybrid"]["queries"]), mode)
 
     def test_broj_tezina_jednak_broju_podupita(self):
-        for mode in MODES:
+        for mode in HYBRID_MODES:
             body = build_search_body("q", VEC, 5, mode, {"1": 0.5})
-            weights = (pipelines.pipeline_definition(mode)["phase_results_processors"][0]
-                       ["normalization-processor"]["combination"]["parameters"]["weights"])
+            processor = pipelines.pipeline_definition(pipeline_key(mode))["phase_results_processors"][0]
+            if "score-ranker-processor" in processor:
+                continue   # RRF nema tezine
+            weights = processor["normalization-processor"]["combination"]["parameters"]["weights"]
             self.assertEqual(len(weights), len(body["query"]["hybrid"]["queries"]), mode)
 
     def test_tezine_su_jednake_i_sabiraju_se_u_jedan(self):
@@ -115,6 +197,23 @@ class PipelineSlaganjeTest(unittest.TestCase):
             weights = pipelines.equal_weights(count)
             self.assertAlmostEqual(sum(weights), 1.0, places=6)
             self.assertLess(max(weights) - min(weights), 0.001)
+
+    def test_lex_daje_bm25_dve_trecine(self):
+        # Isti udeo leksickog signala kao BM25 + sparse u obliku sa tri grane.
+        weights = pipelines.weights_for(pipelines.DENSE_BM25_LEX)
+        self.assertAlmostEqual(sum(weights), 1.0, places=6)
+        three = pipelines.equal_weights(3)
+        self.assertAlmostEqual(weights[0], three[0] + three[2], places=3)   # BM25 je prvi
+
+    def test_rrf_pipeline(self):
+        processor = (pipelines.pipeline_definition(pipelines.DENSE_BM25_RRF)
+                     ["phase_results_processors"][0]["score-ranker-processor"])
+        self.assertEqual(processor["combination"], {"technique": "rrf", "rank_constant": 60})
+
+    def test_samo_eksperimentalni_smeju_da_ne_prodju(self):
+        self.assertEqual(set(pipelines.EXPERIMENTAL),
+                         {pipelines.DENSE_BM25_RRF, pipelines.DENSE_BM25_LEX})
+        self.assertNotIn(pipelines.DENSE_BM25, pipelines.EXPERIMENTAL)
 
     def test_imena_pipeline_a_se_poklapaju_sa_cdk_konstantama(self):
         # Iste vrednosti stoje u SearchStack.PIPELINES (TypeScript).

@@ -27,6 +27,40 @@ def stack_outputs(stack_name: str) -> Dict[str, str]:
     return {o["OutputKey"]: o["OutputValue"] for o in stack.get("Outputs", [])}
 
 
+def stack_function_name(stack_name: str, logical_prefix: str) -> str:
+    """
+    Fizicko ime Lambde po pocetku logickog ID-ja (npr. `IndexChunks`), za
+    funkcije koje stack ne izlaze kao izlaz.
+    """
+    cfn = _session.client("cloudformation")
+    names = []
+    for page in cfn.get_paginator("list_stack_resources").paginate(StackName=stack_name):
+        names += [r["PhysicalResourceId"] for r in page["StackResourceSummaries"]
+                  if r["ResourceType"] == "AWS::Lambda::Function"
+                  and r["LogicalResourceId"].startswith(logical_prefix)]
+    if len(names) != 1:
+        raise RuntimeError("u {} nije nadjena tacno jedna funkcija {}*: {}".format(
+            stack_name, logical_prefix, names))
+    return names[0]
+
+
+def invoke_json(function_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Sinhron poziv Lambde sa JSON dogadjajem; greska funkcije postaje izuzetak."""
+    # Citanje ceka duze od najduzeg timeout-a Lambde koju zovemo (IndexChunks: 10 min).
+    client = _session.client("lambda", config=Config(
+        read_timeout=620, connect_timeout=10, retries={"max_attempts": 0}))
+    response = client.invoke(FunctionName=function_name,
+                             Payload=json.dumps(payload).encode("utf-8"))
+    result = json.loads(response["Payload"].read())
+    if "FunctionError" in response:
+        raise RuntimeError("{}: {}".format(function_name, result.get("errorMessage", result)))
+    return result
+
+
+def s3_client():
+    return _session.client("s3")
+
+
 def invoke_query(function_name: str, request: Dict[str, Any]) -> Dict[str, Any]:
     """
     Direktan poziv QueryHandler-a, mimo API Gateway-a (bez limita od 29 s).

@@ -168,3 +168,116 @@ class JudgeInputsTest(unittest.TestCase):
         self.assertTrue(inputs["with_images"][0].startswith("[1] "))
         self.assertIn("[1]", inputs["with_images"][2])
         self.assertTrue(inputs["with_images"][3].startswith("data:image/png"))
+
+
+def _compare_rec(qid, rank, qtype="tekst", image_only=False):
+    """Zapis za poredjenje pretrage: relevantan deo na rangu `rank` (None = nema ga)."""
+    contexts = [_ctx(1, "x")]
+    if rank is not None:
+        contexts = [_ctx(r, "x") for r in range(1, rank)] + [
+            _ctx(rank, "d1", "image" if image_only else "text")]
+    rec = _rec(contexts, image_only=image_only)
+    question = {"samo_na_slici": image_only}
+    rec.update({"id": qid, "variant": "A", "groups": groups_of(question), "type": qtype})
+    return rec
+
+
+class CompareRetrievalTest(unittest.TestCase):
+    def test_spisak_oblika_isti_kao_u_lambdi(self):
+        from dataset import RETRIEVAL_MODES
+        from retrieval import MODES
+        self.assertEqual(tuple(RETRIEVAL_MODES), tuple(MODES))
+
+    def test_tipovi_pitanja_pokrivaju_skup(self):
+        from dataset import QUESTION_TYPES
+        self.assertEqual({q["tip"] for q in load_questions()}, set(QUESTION_TYPES))
+
+    def test_pogodak_po_pitanju(self):
+        from retrieval_metrics import hit_at_k
+        self.assertTrue(hit_at_k(_compare_rec("q", 3), 5))
+        self.assertFalse(hit_at_k(_compare_rec("q", 3), 2))
+        self.assertFalse(hit_at_k(_compare_rec("q", None), 5))
+
+    def test_prolaz_sa_vise_oblika_je_greska(self):
+        import compare_retrieval
+        manifest = [{"retrieval": "bm25"}, {"retrieval": "dense"}]
+        with self.assertRaises(ValueError):
+            compare_retrieval.run_label(manifest, "r")
+        # Stari manifest bez polja = osnovna pretraga.
+        self.assertEqual(compare_retrieval.run_label([{}], "r"), "dense_bm25")
+
+    def test_izvestaj(self):
+        import compare_retrieval
+
+        def run(name, mode, ranks):
+            return {"run": name, "mode": mode, "k": 5, "failed": [],
+                    "records": [_compare_rec(q, r, t, t == "dijagram") for q, (r, t) in ranks.items()]}
+
+        base = run("r-hib", "dense_bm25", {"Q1": (1, "tekst"), "Q2": (2, "tabela"),
+                                           "Q3": (None, "dijagram")})
+        bm25 = run("r-bm25", "bm25", {"Q1": (1, "tekst"), "Q2": (None, "tabela"),
+                                      "Q3": (4, "dijagram"), "Q4": (1, "tekst")})
+        lines = compare_retrieval.build_report([base, bm25], "r-hib")
+        text = "\n".join(lines)
+        # Q4 postoji samo u jednom prolazu -> ne poredi se.
+        self.assertIn("Upoređeno je 3 pitanja", text)
+        self.assertIn("| dense_bm25 | 0.67 | 1.00 | 1.00 | 0.00 |", text)
+        self.assertIn("| bm25 | 0.67 | 1.00 | 0.00 | 1.00 |", text)
+        self.assertIn("Q2 (2→–)", text)
+        self.assertIn("Q3 (–→4)", text)
+
+    def test_holm(self):
+        from stats import holm
+        # sortirano: 0.01*3 = 0.03, 0.03*2 = 0.06, 0.04*1 = 0.04 -> monotono 0.06
+        self.assertEqual([round(p, 6) for p in holm([0.01, 0.04, 0.03])], [0.03, 0.06, 0.06])
+        self.assertEqual(holm([0.5, 0.9]), [1.0, 1.0])
+        self.assertEqual(holm([]), [])
+
+    def test_izvestaj_ima_holm_po_grupi(self):
+        import compare_retrieval
+
+        def run(name, mode, ranks):
+            return {"run": name, "mode": mode, "k": 5, "failed": [],
+                    "records": [_compare_rec(q, r) for q, r in ranks.items()]}
+
+        base = run("b", "dense_bm25", {"Q1": 1, "Q2": None})
+        x = run("x", "bm25", {"Q1": 1, "Q2": 1})
+        y = run("y", "dense", {"Q1": None, "Q2": None})
+        text = "\n".join(compare_retrieval.build_report([base, x, y], "b"))
+        self.assertIn("p (Holm)", text)
+        # grupa "sva": oba p su 1.0 (po jedno neslaganje), Holm ih ne spusta
+        self.assertIn("| bm25 | sva | 2 | 1 | 2 | 0 | 1 | 1.000 | 1.000 |", text)
+
+    def test_snimak_za_stranicu(self):
+        import export_ui
+        questions = [{"id": "Q1", "pitanje": "p", "odgovor": "o", "tip": "grafikon",
+                      "samo_na_slici": True, "dokumenti": ["d1"]}]
+        ctx = [{"rank": 1, "score": 1.0, "chunkId": "d1#00001", "chunkType": "image", "text": "opis",
+                "imageRef": "images/d1/000.png", "documentId": "d1", "page": 2}]
+        log = [{"queryId": v, "createdAt": "2026-10-02T10:00:00+00:00", "model": "m", "contexts": ctx,
+                "answer": "x [1]", "attachedImages": ["images/d1/000.png"] if v == "qb" else [],
+                "latencyMs": {"total": 1234.5}} for v in ("qa", "qb")]
+        manifest = [{"id": "Q1", "variant": "A", "queryId": "qa"}, {"id": "Q1", "variant": "B", "queryId": "qb"}]
+        scores = [{"id": "Q1", "variant": "B", "answer_accuracy": 1.0}]
+        snap = export_ui.build_snapshot(questions, manifest, log, scores, "r")
+        q = snap["questions"][0]
+        self.assertEqual(snap["date"], "2026-10-02")
+        self.assertEqual(q["ctx"], [["d1#00001", 1.0]])
+        self.assertEqual(snap["chunks"]["d1#00001"]["img"], "d1__000.png")
+        self.assertEqual(q["B"]["att"], ["d1__000.png"])
+        self.assertIsNone(q["A"]["acc"])
+        self.assertEqual(q["B"]["ms"], {"total": 1234})
+
+    def test_snimak_odbija_razlicitu_pretragu(self):
+        import export_ui
+        questions = [{"id": "Q1", "pitanje": "p", "odgovor": "o", "tip": "tekst", "dokumenti": ["d1"]}]
+        log = [{"queryId": v, "contexts": [_ctx(1, d)], "answer": ""} for v, d in (("qa", "d1"), ("qb", "d2"))]
+        manifest = [{"id": "Q1", "variant": "A", "queryId": "qa"}, {"id": "Q1", "variant": "B", "queryId": "qb"}]
+        with self.assertRaises(ValueError):
+            export_ui.build_snapshot(questions, manifest, log, [], "r")
+
+    def test_osnova_mora_biti_medju_prolazima(self):
+        import compare_retrieval
+        runs = [{"run": "a", "mode": "bm25", "k": 5, "failed": [], "records": []}]
+        with self.assertRaises(ValueError):
+            compare_retrieval.build_report(runs, "nema")

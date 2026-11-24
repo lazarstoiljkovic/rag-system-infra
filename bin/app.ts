@@ -6,7 +6,6 @@ import { SearchStack } from '../lib/search-stack';
 import { ModelServingStack } from '../lib/model-serving-stack';
 import { IngestionStack } from '../lib/ingestion-stack';
 import { QueryStack } from '../lib/query-stack';
-import { ObservabilityStack } from '../lib/observability-stack';
 
 const app = new cdk.App();
 
@@ -19,14 +18,9 @@ const network = new NetworkStack(app, 'RagNetworkStack', { env });
 
 const storage = new StorageStack(app, 'RagStorageStack', {
   env,
-  // true od 2026-10-01, pred evaluaciju: `cdk destroy` ne sme da odnese
-  // query-log, jedini izvor odgovora na kojima stoje rezultati rada. Posle
-  // destroy-a bucket i tabele ostaju na nalogu i brisu se rucno.
   retainData: true,
 });
 
-// Vektorska baza u zasebnom stack-u: indeks je izveden podatak i sme da se
-// srusi radi ustede, dok S3 i DynamoDB ostaju netaknuti.
 new SearchStack(app, 'RagSearchStack', {
   env,
   vpc: network.vpc,
@@ -56,8 +50,6 @@ new QueryStack(app, 'RagQueryStack', {
   queryLogTable: storage.queryLogTable,
   inferenceTagName: ModelServingStack.INFERENCE_TAG_NAME,
 });
-
-new ObservabilityStack(app, 'RagObservabilityStack', { env });
 
 cdk.Tags.of(app).add('Project', 'privatno-hostovani-rag');
 cdk.Tags.of(app).add('Purpose', 'diplomski-rad');

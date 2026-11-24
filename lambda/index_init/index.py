@@ -26,7 +26,7 @@ import boto3
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 
-from pipelines import all_pipelines
+from pipelines import EXPERIMENTAL, PIPELINE_NAMES, pipeline_definition
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -166,9 +166,18 @@ def _put_search_pipelines() -> str:
     razliku od indeksa, ovde nema podataka koji bi se izgubili.
     """
     names = []
-    for name, body in all_pipelines().items():
-        status, payload = _signed_request("PUT", f"/_search/pipeline/{name}", body)
+    for mode, name in PIPELINE_NAMES.items():
+        status, payload = _signed_request("PUT", f"/_search/pipeline/{name}",
+                                          pipeline_definition(mode))
         if status not in (200, 201):
+            if mode in EXPERIMENTAL:
+                # Eksperimentalni pipeline ne sme da obori deploy (i rollback
+                # od 15-45 min): sistem radi i bez njega, a merenje tog oblika
+                # pretrage ce pasti glasno, sa greskom u query-log-u.
+                logger.error("Eksperimentalni pipeline %s NIJE prihvacen (%s): %s",
+                             name, status, payload)
+                names.append(f"{name} (NIJE prihvacen)")
+                continue
             raise RuntimeError(f"Pipeline {name} nije prihvacen ({status}): {payload}")
         status, payload = _signed_request("GET", f"/_search/pipeline/{name}")
         logger.info("Prihvacen pipeline %s (%s): %s", name, status, payload)

@@ -2,68 +2,95 @@
 <html lang="sr">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RAG nad dokumentacijom</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Pitanja nad dokumentacijom</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="top">
-    <div class="wrap">
-      <h1>Pitanja nad tehničkom dokumentacijom</h1>
-      <p class="sub">Privatno hostovan RAG sistem · sintetički korpus „Nexa Tech Solutions“</p>
+  <header class="bar">
+    <div class="bar-in gutter">
+      <div class="brand"><b>Pitanja nad dokumentacijom</b><span>Nexa Tech Solutions · privatno hostovan RAG</span></div>
+      <nav class="tabs" aria-label="Pogledi">
+        <button type="button" class="tab" id="tab-ask" data-view="pitaj">Pitaj</button>
+        <button type="button" class="tab" id="tab-res" data-view="rezultati">Rezultati merenja</button>
+      </nav>
     </div>
   </header>
 
-  <main class="wrap">
-    <details class="card settings" id="settings">
-      <summary>Podešavanja veze</summary>
-      <div class="grid2">
-        <label>Adresa API-ja
-          <input id="apiUrl" type="url" placeholder="https://…/v1/query" autocomplete="off">
-        </label>
-        <label>API ključ
-          <input id="apiKey" type="password" placeholder="x-api-key" autocomplete="off">
-        </label>
-      </div>
-      <p class="hint">Ključ se čuva samo u ovom pregledaču. Vrednost:
-        <code>aws apigateway get-api-key --api-key &lt;id&gt; --include-value</code>
-        (izlaz <code>ApiKeyCommand</code> stack-a <code>RagQueryStack</code>).</p>
-    </details>
-
-    <section class="card">
-      <label>Primer pitanja
-        <select id="examples"><option value="">— izaberi ili upiši svoje pitanje —</option></select>
-      </label>
-      <div id="expected" class="expected" hidden></div>
-
-      <label>Pitanje
-        <textarea id="question" rows="3" maxlength="2000"
-          placeholder="npr. Na kom portu radi payment-service i koliki mu je timeout?"></textarea>
-      </label>
-
-      <div class="controls">
-        <label class="inline">Pretraga
-          <select id="retrieval">
-            <option value="dense_bm25">dense + BM25 (osnovna)</option>
-            <option value="dense_bm25_sparse">dense + BM25 + sparse</option>
-          </select>
-        </label>
-        <label class="inline">k
-          <input id="k" type="number" min="1" max="20" value="5">
-        </label>
-        <div class="buttons">
-          <button type="button" data-run="A">Varijanta A</button>
-          <button type="button" data-run="B">Varijanta B</button>
-          <button type="button" data-run="AB" class="primary">Uporedi A i B</button>
+  <!-- ===================== Pitaj ===================== -->
+  <main id="view-ask" class="ask-wrap gutter">
+    <section class="composer" aria-label="Pitanje">
+      <h1>Postavi pitanje o dokumentaciji</h1>
+      <textarea id="q-input" maxlength="2000" aria-label="Pitanje"
+        placeholder="npr. Na kom portu radi payment-service i koliki mu je timeout?"></textarea>
+      <ul class="suggest" id="suggest" hidden></ul>
+      <div class="crow">
+        <div class="grow"><span class="lbl">Primeri</span><span id="examples" class="exs"></span></div>
+        <div class="seg" role="group" aria-label="Izvor odgovora">
+          <button type="button" id="src-live" aria-pressed="true">Uživo</button>
+          <button type="button" id="src-snap" aria-pressed="false">Snimljen</button>
         </div>
+        <button type="button" class="btn primary" id="ask-btn">Pitaj</button>
       </div>
-      <p class="hint">A: generator vidi samo tekst (opis slike umesto slike).
-        B: uz opis dobija i originalnu sliku.</p>
+      <div class="status" id="sys-status"></div>
+      <details class="conn" id="conn">
+        <summary>Veza sa API-jem</summary>
+        <div class="conn-grid">
+          <label>Adresa API-ja<input id="api-url" type="url" placeholder="https://…/v1/query" autocomplete="off"></label>
+          <label>API ključ<input id="api-key" type="password" placeholder="x-api-key" autocomplete="off"></label>
+          <label>Oblik pretrage
+            <select id="retrieval">
+              <option value="dense_bm25">dense + BM25 (osnovna)</option>
+              <option value="dense_bm25_sparse">dense + BM25 + sparse</option>
+            </select>
+          </label>
+        </div>
+        <p class="note">Ključ se čuva samo u ovom pregledaču. Vrednost daje komanda iz izlaza
+          <code>ApiKeyCommand</code> stack-a <code>RagQueryStack</code>.</p>
+      </details>
+    </section>
+    <section class="result" id="result" aria-live="polite"></section>
+  </main>
+
+  <!-- ===================== Rezultati merenja ===================== -->
+  <main id="view-res" class="res-wrap gutter" hidden>
+    <section class="summary" id="summary" aria-label="Zbirni rezultati">
+      <h1>Da li generatoru vredi dati originalnu sliku?</h1>
+      <p class="lede" id="lede"></p>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr class="grp"><th></th><th colspan="6">Odgovori (ocena sudije)</th><th colspan="2">Pretraga, k = 5</th></tr>
+            <tr><th>Grupa pitanja</th><th>n</th><th>A tačno</th><th>B tačno</th><th>samo A</th><th>samo B</th><th>p</th><th>Hit@5</th><th>MRR</th></tr>
+          </thead>
+          <tbody id="sum-body"></tbody>
+        </table>
+      </div>
+      <p class="note">Tačno znači da je sudija (Claude Sonnet, AnswerAccuracy) dao bar 0,75. „Samo A“ i „samo B“ su pitanja
+        na kojima je tačna samo jedna varijanta; p je tačan McNemar-ov test nad njima. Pretraga je ista u obe varijante.
+        Klik na red filtrira pitanja ispod.</p>
     </section>
 
-    <div id="status" class="status" role="status" aria-live="polite"></div>
-    <section id="results" class="results"></section>
+    <div class="bench" id="bench">
+      <aside class="picker" aria-label="Pitanja">
+        <div class="picker-top">
+          <input class="search" id="search" type="search" placeholder="Pretraži pitanja, npr. namespace ili N3" autocomplete="off">
+          <div class="chips" id="chips" role="group" aria-label="Filter"></div>
+          <div class="legend"><span><i class="dot a ok"></i> <i class="dot b ok"></i> tačno</span><span><i class="dot a"></i> <i class="dot b"></i> netačno</span><span>A pa B</span></div>
+        </div>
+        <ul class="qlist" id="qlist"></ul>
+      </aside>
+      <div class="detail" id="detail"></div>
+    </div>
   </main>
+
+
+  <dialog id="lightbox">
+    <div class="lb-in">
+      <img id="lb-img" alt="">
+      <div class="lb-row"><span id="lb-cap"></span><button type="button" class="btn" id="lb-close">Zatvori</button></div>
+    </div>
+  </dialog>
 
   <script src="app.js"></script>
 </body>

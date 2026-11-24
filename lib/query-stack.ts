@@ -84,6 +84,8 @@ export class QueryStack extends cdk.Stack {
         INDEX_NAME_PARAM: SearchStack.INDEX_NAME_PARAM,
         PIPELINE_DENSE_BM25: SearchStack.PIPELINES.dense_bm25,
         PIPELINE_DENSE_BM25_SPARSE: SearchStack.PIPELINES.dense_bm25_sparse,
+        PIPELINE_DENSE_BM25_RRF: SearchStack.PIPELINES.dense_bm25_rrf,
+        PIPELINE_DENSE_BM25_LEX: SearchStack.PIPELINES.dense_bm25_lex,
       },
       vpc: props.vpc,
       securityGroups: [props.lambdaSg],
@@ -193,8 +195,10 @@ export class QueryStack extends cdk.Stack {
       sources: [
         s3deploy.Source.asset(path.join(__dirname, '..', 'ui')),
         // Adresa API-ja se zna tek pri deploy-u; stranica je cita pri ucitavanju.
-        s3deploy.Source.jsonData('config.json', { apiUrl: `${this.api.url}query` }),
-        // Primeri pitanja sa ocekivanim odgovorima, za demo.
+        // Region ide u liniju "privatno hostovano" ispod odgovora.
+        s3deploy.Source.jsonData('config.json', { apiUrl: `${this.api.url}query`, region: this.region }),
+        // Skup pitanja, za primere i predloge kad snimka merenja nema. Snimak
+        // (ui/snimljeno/, pravi ga evaluation/export_ui.py) ide sa ostatkom ui/.
         s3deploy.Source.data('pitanja.json', fs.readFileSync(
           path.join(__dirname, '..', 'corpus', 'demo', 'pitanja.json'), 'utf8')),
       ],

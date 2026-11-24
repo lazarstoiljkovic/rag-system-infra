@@ -36,6 +36,44 @@ evaluation/.venv/bin/python evaluation/ragas_eval.py --run-id $RUN
 evaluation/.venv/bin/python evaluation/report.py --run-id $RUN
 ```
 
+## Poređenje oblika pretrage (samo pretraga)
+
+Da li hibrid na ovom korpusu zaista pomaže? Bez pojedinačnih grana to se samo
+pretpostavlja. Merenje ide bez generisanja i bez sudije, nad istim indeksom kao
+glavno merenje. Osnovna pretraga ostaje `dense_bm25` bez obzira na ishod.
+
+```bash
+D=2026-11-24
+# 0. sveže podignut RagSearchStack + GPU (bge-m3 za vektor pitanja); indeks iz
+#    embedded.json u S3 — isti opisi i vektori kao u eval-2026-10-02, bez VLM-a
+evaluation/.venv/bin/python evaluation/reindex_from_s3.py --dry-run
+evaluation/.venv/bin/python evaluation/reindex_from_s3.py
+
+# 1. osam oblika, samo pretraga (varijanta A)
+MODES="dense_bm25 dense_bm25_sparse dense_bm25_rrf dense_bm25_lex dense_bm25_deep bm25 dense sparse"
+for M in $MODES; do
+  evaluation/.venv/bin/python evaluation/run_queries.py --run-id ret-$D-$M --retrieval $M --retrieval-only
+  evaluation/.venv/bin/python evaluation/fetch_log.py --run-id ret-$D-$M
+done
+
+# 2. jedna tabela, po tipu pitanja, McNemar prema osnovi (sirovo p i Holm)
+#    (eval-2026-10-02 uz to proverava ponovljivost: dense_bm25 mora dati isto)
+evaluation/.venv/bin/python evaluation/compare_retrieval.py --baseline ret-$D-dense_bm25 \
+  --runs $(for M in $MODES; do printf "ret-$D-$M "; done) eval-2026-10-02
+```
+
+| Oblik | Šta se menja u odnosu na osnovu | Pitanje |
+|---|---|---|
+| `bm25`, `dense`, `sparse` | samo jedna grana (tačno podupit hibrida, bez pipeline-a) | da li hibrid uopšte pomaže |
+| `dense_bm25_sparse` | treća, retka grana | već izmereno 2. 10. |
+| `dense_bm25_rrf` | spajanje po rangu (RRF, k = 60) umesto min-max | da li je min-max dobar izbor |
+| `dense_bm25_lex` | težine 2/3 BM25 : 1/3 kNN | da li retka grana pomaže sama, ili samo zato što leksički signal dobija 2/3 težine |
+| `dense_bm25_deep` | 50 kandidata po grani (`pagination_depth`) umesto 5 | da li normalizacija nad samo 5 kandidata spušta slike |
+
+Pipeline-i za RRF i lex su eksperimentalni: ako ih domen odbije, `IndexInit`
+to upiše u log i deploy ide dalje, a merenje tog oblika pada sa greškom u
+`query-log`-u.
+
 ## Šta se meri
 
 | Metrika | Izvor | Napomena |

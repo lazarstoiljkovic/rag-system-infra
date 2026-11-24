@@ -32,7 +32,14 @@ class ParseRequestTest(unittest.TestCase):
     def test_podrazumevano_a_osnovna_pretraga_k5(self):
         req = parse_request(_api({"question": " Koji je port? "}))
         self.assertEqual(req, {"question": "Koji je port?", "variant": "A",
-                               "retrieval": "dense_bm25", "k": 5, "evalRunId": None})
+                               "retrieval": "dense_bm25", "k": 5, "evalRunId": None,
+                               "retrievalOnly": False})
+
+    def test_pojedinacne_grane_i_samo_pretraga(self):
+        for mode in ("bm25", "dense", "sparse", "BM25"):
+            self.assertEqual(parse_request({"question": "q", "retrieval": mode})["retrieval"],
+                             mode.lower())
+        self.assertTrue(parse_request({"question": "q", "retrievalOnly": True})["retrievalOnly"])
 
     def test_direktan_poziv_i_base64_telo_daju_isto(self):
         body = {"question": "q", "variant": "b", "retrieval": "DENSE_BM25_SPARSE",
@@ -47,7 +54,9 @@ class ParseRequestTest(unittest.TestCase):
             {"question": 42},
             {"question": "x" * 2001},
             {"question": "q", "variant": "C"},
-            {"question": "q", "retrieval": "bm25"},
+            {"question": "q", "retrieval": "samo_bm25"},
+            {"question": "q", "retrievalOnly": "true"},
+            {"question": "q", "retrievalOnly": 1},
             {"question": "q", "k": 0},
             {"question": "q", "k": 21},
             {"question": "q", "k": "5"},
@@ -136,6 +145,14 @@ class LogItemTest(unittest.TestCase):
 
     def test_greska_se_upisuje(self):
         self.assertEqual(self._item(error="timeout", answer="")["error"], "timeout")
+
+    def test_samo_pretraga_se_oznacava_a_inace_polje_izostaje(self):
+        self.assertNotIn("retrievalOnly", self._item())
+        req = dict(self.REQ, retrieval="bm25", retrievalOnly=True)
+        item = self._item(request=req, answer="", attached_images=[], pipeline=None)
+        self.assertTrue(item["retrievalOnly"])
+        self.assertEqual(item["retrieval"], "bm25")
+        self.assertNotIn("pipeline", item)
 
     def test_to_dynamo_ne_dira_bool_i_int(self):
         self.assertEqual(to_dynamo({"a": True, "b": 3, "c": None}), {"a": True, "b": 3})

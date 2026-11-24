@@ -59,6 +59,26 @@ def mcnemar_chi2(b: int, c: int) -> Tuple[float, float]:
     return stat, math.erfc(math.sqrt(stat / 2))
 
 
+def holm(pvalues: Sequence[float]) -> List[float]:
+    """
+    Holm-Bonferroni korekcija za vise poredjenja nad istim skupom pitanja.
+
+    Kad se sedam oblika pretrage poredi sa osnovom, verovatnoca da bar jedno
+    p padne ispod 0.05 slucajno je znatno veca od 5%. Holm je uniformno jaci od
+    obicnog Bonferroni-ja: najmanje p se mnozi sa m, sledece sa m - 1 i tako
+    dalje, uz monotonost (korigovana vrednost ne sme pasti ispod prethodne).
+    Vraca korigovane vrednosti istim redom kao ulaz.
+    """
+    m = len(pvalues)
+    order = sorted(range(m), key=lambda i: pvalues[i])
+    adjusted = [0.0] * m
+    running = 0.0
+    for position, i in enumerate(order):
+        running = max(running, min(1.0, (m - position) * pvalues[i]))
+        adjusted[i] = running
+    return adjusted
+
+
 def cohen_kappa(pairs: Iterable[Tuple[bool, bool]]) -> float:
     """
     Slaganje dva ocenjivaca (npr. sudija i rucna ocena) iznad slucajnog.

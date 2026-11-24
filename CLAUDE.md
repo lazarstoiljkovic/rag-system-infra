@@ -87,13 +87,20 @@ koja dotice model tanak HTTP klijent ka EC2 instanci. To je razlog cele podele.
 |---|---|
 | Control plane (ingestion) | Step Functions + 5 Lambdi (Python) |
 | Inference plane | EC2 g5.xlarge + vLLM |
-| Storage plane | S3 (1 bucket, 3 prefiksa), OpenSearch domen, DynamoDB (2 tabele) |
+| Storage plane | S3 (1 bucket: `raw/`, `images/`, `manifests/`), OpenSearch domen, DynamoDB (2 tabele) |
 | Query plane | API Gateway + JEDNA Lambda (QueryHandler) |
 
-### Odstupanje od dokumentacije: sedmi stack (`search-stack`)
+### Odstupanja od dokumentacije: `search-stack` dodat, `observability-stack` uklonjen
 
 Dokumentacija nabraja sest stack-ova i ne smesta OpenSearch ni u jedan.
 Odluka: **OpenSearch dobija svoj `search-stack`**, ne ide u `storage-stack`.
+
+`observability-stack` je uklonjen 2026-11-23: bio je prazan (TODO) i nikad
+deploy-ovan. Pracenje vec postoji bez njega: CloudWatch Logs svih Lambdi,
+istorija Step Functions-a uz X-Ray, `query-log` (latencija po fazama i
+neuspesni upiti), `ingestion-log`, tag `vllm-status`, i osnovne metrike koje
+CloudWatch sam belezi. Dashboard za sistem koji radi po sat vremena ne bi
+doneo nista. Sistem sada ima sest stack-ova.
 
 Razlog nije trosak nego priroda podataka. Indeks je **izveden podatak** — svaki
 chunk, vektor i caption moze se ponovo napraviti pokretanjem ingestiona nad
@@ -115,6 +122,7 @@ vredi ga navesti u poglavlju 3.2 rada.
 - **Pun custom VPC sa NAT Gateway-om** — EC2 ide u public subnet sa
   restriktivnom SG (SG-to-SG, ne 0.0.0.0/0).
 - **EventBridge auto-stop** — GPU se pali/gasi RUCNO preko CLI-ja.
+- **CloudWatch dashboard (`observability-stack`)** — uklonjen 2026-11-23, vidi gore.
 - **CloudFront** — cist S3 static website hosting.
 - **Tri odvojena S3 bucket-a** — jedan sa prefiksima je dovoljno.
 
@@ -457,6 +465,33 @@ se dalje NE podesava na istom skupu pitanja (prilagodjavanje skupu za evaluaciju
 Uz oba: `-sparse` prolazi (106, samo A). GPU i RagSearchStack OSTAVLJENI UPALJENI
 (Lazar hoce rucnu proveru) — gasiti samo uz njegovu potvrdu.
 
+### Poredjenje oblika pretrage (kod 2026-11-23) — NIJE PUSTENO
+
+Rupa u rezultatima: postoje samo hibridi (dense+BM25 0.92/0.72, +sparse
+0.94/0.77), pa se ne moze pokazati da hibrid pomaze — samo se pretpostavlja.
+QueryHandler sada ima i `bm25`, `dense`, `sparse` (tacno podupiti hibrida,
+bez pipeline-a; zakljucano testom) i `retrievalOnly` (bez slika i
+generisanja). Skripte: `reindex_from_s3.py` (indeks iz
+`manifests/<doc>/embedded.json` — 22 dok., 109 delova, svi iz 2026-10-02;
+provereno da je tekst svih 105 delova iz loga glavnog merenja identican, pa je
+indeks ISTI, bez VLM-a), `compare_retrieval.py` (Hit@5/MRR po tipu pitanja +
+McNemar prema osnovi). Tok u `evaluation/README.md`. U `manifests/` su i
+`embedded.json` starog korpusa (Vranac/Kestrel) — skripta uzima samo dokumente
+iz `corpus/demo/dokumenti/`. Osnovna pretraga ostaje dense+BM25 bez obzira na
+ishod (merenje, ne biranje na skupu za evaluaciju). Trazi GPU (bge-m3 za
+vektor pitanja) + sveze podignut RagSearchStack — UZ POTVRDU.
+
+Dopuna (isti dan): jos tri oblika, svi sa ISTIM podupitima kao osnova —
+`dense_bm25_rrf` (RRF, `score-ranker-processor`, uveden u 2.19),
+`dense_bm25_lex` (tezine 2/3 BM25 : 1/3 kNN = leksicki udeo kao sa retkom
+granom, bez nje) i `dense_bm25_deep` (`pagination_depth` 50 i kNN k 50).
+Provereno u izvornom kodu neural-search 2.19: bez `pagination_depth` svaka
+grana vraca `size` (5) pogodaka; min-max je po grani nad tim pogocima
+(najslabiji dobija 0.001); deo koga nema u grani dobija 0 UZ punu tezinu, pa
+deo koji nadje samo jedna grana dobija najvise 0.5. RRF i lex pipeline-i su
+eksperimentalni: odbijanje ne obara deploy (`pipelines.EXPERIMENTAL`).
+`schemaVersion` 3. Izvestaj ima Holm-ovu korekciju po grupi. Testova 179.
+
 ### Prosirenje korpusa (2026-10-01, posle prvog merenja) — indeksirano 2026-10-02
 
 22 dokumenta (bilo 11), 109 delova (60 tekst / 21 tabela / 28 slika), 106
@@ -550,6 +585,18 @@ GPU `g5.xlarge` u `1b` odmah; `ready` za ~12 min; ukupno upaljen 26 min.
   LLM sudiju u RAGAS-u.
 
 ### Faza 6 — UI (2026-09-26, deploy-ovano uz `RagQueryStack`)
+
+**Preradjeno 2026-11-23 (NIJE deploy-ovano)** po prototipu koji je Lazar
+odobrio: dva pogleda. „Pitaj“ = pitanje -> odgovor B -> izvori (slika i opis
+jedno pored drugog), A na zahtev, linija „privatno hostovano“ (model iz
+odgovora Lambde, region iz `config.json`). Kad sistem ne odgovara (status 0
+ili >= 500) a pitanje je iz skupa, prikazuje se SNIMLJEN odgovor, uvek
+oznacen; 400/403 se ne maskiraju snimkom. „Rezultati merenja“ = zbirna
+tabela (proverena prema `report.md`) i svih 106 pitanja sa ocenom sudije.
+Snimak pravi `evaluation/export_ui.py` u `ui/snimljeno/` (u .gitignore-u,
+kao i rezultati); slike tamo postaju javne — prihvaceno, korpus je
+sinteticki. `ui/app.js` je ranije bio van git-a zbog pravila `*.js`
+(ispravljeno: `!ui/app.js`). Opis ispod je za staru verziju.
 
 `ui/` (index.html, style.css, app.js) — staticka stranica, bez biblioteka i
 bez build koraka. Hostuje je `RagQueryStack` na S3 website hosting-u.

@@ -28,7 +28,7 @@ import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import boto3
 from botocore.auth import SigV4Auth
@@ -45,7 +45,8 @@ from inference import (
 from prompting import build_messages, images_to_attach, prompt_fingerprint
 from records import build_log_item
 from request import BadRequest, http_response, parse_request, public_sources
-from retrieval import DENSE_BM25, DENSE_BM25_SPARSE, build_search_body, parse_hits
+from retrieval import (DENSE_BM25, DENSE_BM25_LEX, DENSE_BM25_RRF, DENSE_BM25_SPARSE,
+                       build_search_body, parse_hits, pipeline_key)
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -71,6 +72,8 @@ PIPELINES = {
     DENSE_BM25: os.environ.get("PIPELINE_DENSE_BM25", "rag-hybrid-dense-bm25"),
     DENSE_BM25_SPARSE: os.environ.get("PIPELINE_DENSE_BM25_SPARSE",
                                       "rag-hybrid-dense-bm25-sparse"),
+    DENSE_BM25_RRF: os.environ.get("PIPELINE_DENSE_BM25_RRF", "rag-hybrid-dense-bm25-rrf"),
+    DENSE_BM25_LEX: os.environ.get("PIPELINE_DENSE_BM25_LEX", "rag-hybrid-dense-bm25-lex"),
 }
 MODEL = os.environ.get("VLM_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct-AWQ")
 MAX_ANSWER_TOKENS = int(os.environ.get("MAX_ANSWER_TOKENS", "512"))
@@ -96,10 +99,14 @@ def _param(name: str) -> str:
     return _cache[name]
 
 
-def _search(body: Dict[str, Any], pipeline: str) -> Dict[str, Any]:
-    """SigV4-potpisan `_search` ka domenu u VPC-u, sa izabranim pipeline-om."""
-    url = "https://{}/{}/_search?search_pipeline={}".format(
-        _param(ENDPOINT_PARAM), _param(INDEX_NAME_PARAM), pipeline)
+def _search(body: Dict[str, Any], pipeline: Optional[str]) -> Dict[str, Any]:
+    """
+    SigV4-potpisan `_search` ka domenu u VPC-u. Hibridni upit ide kroz
+    izabrani pipeline; pojedinacna grana (`pipeline` je None) bez njega.
+    """
+    url = "https://{}/{}/_search".format(_param(ENDPOINT_PARAM), _param(INDEX_NAME_PARAM))
+    if pipeline:
+        url += "?search_pipeline={}".format(pipeline)
     data = json.dumps(body).encode("utf-8")
 
     aws_request = AWSRequest(method="POST", url=url, data=data,
@@ -145,7 +152,8 @@ def handler(event, context):
 
     query_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat()
-    pipeline = PIPELINES[req["retrieval"]]
+    key = pipeline_key(req["retrieval"])
+    pipeline = PIPELINES[key] if key else None
     latencies: Dict[str, float] = {}
     contexts: List[Dict[str, Any]] = []
     attached: List[str] = []
@@ -167,17 +175,20 @@ def handler(event, context):
         contexts = parse_hits(_search(body, pipeline))
         latencies["search"] = _elapsed_ms(start)
 
-        start = time.monotonic()
-        image_urls = _load_images(images_to_attach(contexts, req["variant"]))
-        messages, attached = build_messages(req["question"], contexts,
-                                            req["variant"], image_urls)
-        latencies["images"] = _elapsed_ms(start)
+        # Poredjenje oblika pretrage: odgovor nije potreban, pa ni GPU vreme
+        # za generisanje.
+        if not req["retrievalOnly"]:
+            start = time.monotonic()
+            image_urls = _load_images(images_to_attach(contexts, req["variant"]))
+            messages, attached = build_messages(req["question"], contexts,
+                                                req["variant"], image_urls)
+            latencies["images"] = _elapsed_ms(start)
 
-        start = time.monotonic()
-        remaining_s = context.get_remaining_time_in_millis() / 1000 - _RESERVE_S
-        answer = chat_completion(ip, messages, max_tokens=MAX_ANSWER_TOKENS,
-                                 timeout=max(5, int(remaining_s))).strip()
-        latencies["generate"] = _elapsed_ms(start)
+            start = time.monotonic()
+            remaining_s = context.get_remaining_time_in_millis() / 1000 - _RESERVE_S
+            answer = chat_completion(ip, messages, max_tokens=MAX_ANSWER_TOKENS,
+                                     timeout=max(5, int(remaining_s))).strip()
+            latencies["generate"] = _elapsed_ms(start)
 
     except InferenceUnavailable as error:
         status, error_text = 503, str(error)
@@ -198,7 +209,10 @@ def handler(event, context):
         "queryId": query_id,
         "variant": req["variant"],
         "retrieval": req["retrieval"],
+        "retrievalOnly": req["retrievalOnly"],
         "latencyMs": latencies,
+        # Stranica pokazuje koji je model odgovorio (linija "privatno hostovano").
+        "model": MODEL,
     }
     if error_text:
         payload["error"] = error_text

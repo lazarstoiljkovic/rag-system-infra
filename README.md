@@ -36,7 +36,6 @@ zaključano testom.
 | `RagSearchStack` | OpenSearch 2.19, indeks sa hibridnom šemom (BM25 + kNN + retke težine), interface endpointi za EC2 i SSM | podiže se i ruši po potrebi |
 | `RagIngestionStack` | EventBridge → Step Functions (DistributedMap) → 5 Lambda funkcija | trajno |
 | `RagQueryStack` | API Gateway `POST /query` (API ključ), Lambda `QueryHandler`, statična korisnička stranica | trajno |
-| `RagObservabilityStack` | predviđen za nadzorne table; trenutno prazan | — |
 
 Indeks je izveden podatak (može se ponovo napraviti iz `raw/`), pa je vektorska
 baza u zasebnom stack-u koji se ruši tokom pauza, dok dokumenti i `query-log`
@@ -50,7 +49,7 @@ mirovanju košta praktično ništa.
 | `bin/`, `lib/` | CDK aplikacija i stack-ovi |
 | `lambda/` | Python kod Lambda funkcija: ekstrakcija i podela na delove, opis slika, vektorizacija, indeksiranje, upiti (`query_handler/`) |
 | `ec2-userdata/vllm-bootstrap.sh` | automatsko podizanje oba servera modela, sa fiksiranim verzijama paketa |
-| `ui/` | statična korisnička stranica (poređenje A i B jedno pored drugog) |
+| `ui/` | statična korisnička stranica: „Pitaj“ (odgovor, izvori, poređenje sa A) i „Rezultati merenja“ |
 | `corpus/demo/` | generator sintetičkog korpusa (22 dokumenta fiktivne firme) i 106 pitanja sa očekivanim odgovorima |
 | `evaluation/` | evaluacija: postavljanje pitanja, metrike pretrage, RAGAS, McNemar-ov test — vidi [evaluation/README.md](evaluation/README.md) |
 | `test/python/` | testovi (stdlib `unittest`, bez instalacije) |
@@ -93,6 +92,9 @@ aws ssm start-session --target <instance-id> \
 aws s3 cp corpus/demo/dokumenti/ s3://<bucket>/raw/ --recursive
 
 # pitanja: korisnicka stranica (izlaz UiUrl), API kljuc preko izlaza ApiKeyCommand
+# snimak merenja za stranicu (pogled "Rezultati merenja" i rezerva kad je sistem ugasen),
+# pre deploy-a RagQueryStack; ui/snimljeno/ nije u git-u
+python3 evaluation/export_ui.py --run-id eval-2026-10-02
 
 # gasenje skupih delova
 aws autoscaling set-desired-capacity --auto-scaling-group-name <asg> --desired-capacity 0

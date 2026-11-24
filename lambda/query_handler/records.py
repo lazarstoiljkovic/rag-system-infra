@@ -78,5 +78,8 @@ def build_log_item(
         "pipeline": pipeline,
         "promptFingerprint": prompt_fingerprint,
         "error": error,
+        # Samo kad je zadato: prazan odgovor je tada namera, a ne greska.
+        # Stari zapisi ostaju istog oblika.
+        "retrievalOnly": True if request.get("retrievalOnly") else None,
     }
     return to_dynamo(item)

@@ -1,5 +1,7 @@
 *.js
 !jest.config.js
+# skripta korisnicke stranice nije izlaz kompajliranja (pravilo *.js gore je za CDK)
+!ui/app.js
 *.d.ts
 node_modules
 
@@ -16,6 +18,8 @@ __pycache__/
 evaluation/config.json
 evaluation/results/
 evaluation/.venv/
+# snimak merenja za stranicu, pravi ga evaluation/export_ui.py iz evaluation/results/
+ui/snimljeno/
 
 # OS
 .DS_Store
